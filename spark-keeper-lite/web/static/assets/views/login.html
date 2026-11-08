@@ -1,0 +1,74 @@
+<div class="auth-card">
+  <div class="auth-hero">
+    <div class="auth-hero__badge"><icon name="flame" :size="14"></icon> 云端自动续火花</div>
+    <h1>{{ siteName }}</h1>
+    <p>把抖音账号托管到这里，到点自动给好友发消息，火花一天都不会断。</p>
+    <ul class="auth-hero__list">
+      <li><icon name="check-circle" :size="15"></icon><span>扫码登录，登录态加密保存，不接触你的密码</span></li>
+      <li><icon name="check-circle" :size="15"></icon><span>随机文案 + 随机抖动，避免规律化触发风控</span></li>
+      <li><icon name="check-circle" :size="15"></icon><span>每次执行都有记录、截图与失败重试</span></li>
+    </ul>
+  </div>
+
+  <form class="auth-form" @submit.prevent="submit">
+    <div>
+      <div class="auth-form__title">{{ adminMode ? '管理员登录' : '登录账号' }}</div>
+      <div class="auth-form__sub">
+        {{ adminMode ? '仅管理员账号可从此入口登录' : '使用用户名、邮箱或手机号登录' }}
+      </div>
+    </div>
+
+    <alert type="error" :message="error" v-if="error"></alert>
+
+    <div class="field">
+      <label class="field__label">账号</label>
+      <input class="input" v-model="form.identifier" autocomplete="username"
+             placeholder="用户名 / 邮箱 / 手机号" @keyup.enter="submit" />
+    </div>
+
+    <div class="field">
+      <label class="field__label">密码</label>
+      <div class="input-affix">
+        <input class="input" :type="showPassword ? 'text' : 'password'" v-model="form.password"
+               autocomplete="current-password" placeholder="请输入密码" @keyup.enter="submit" />
+        <button type="button" class="input-affix__btn" @click="showPassword = !showPassword">
+          {{ showPassword ? '隐藏' : '显示' }}
+        </button>
+      </div>
+    </div>
+
+    <div class="flex-between">
+      <label class="checkbox">
+        <input type="checkbox" v-model="form.remember" />
+        <span>记住我（14 天内免登录）</span>
+      </label>
+      <a class="link-btn" href="#/forgot">忘记密码？</a>
+    </div>
+
+    <button class="btn btn--primary btn--lg btn--block" type="submit"
+            :disabled="submitting" :class="{ 'is-loading': submitting }">
+      <icon name="refresh" :size="15" class="spin" v-if="submitting"></icon>
+      <icon name="logout" :size="15" v-else></icon>
+      {{ submitting ? '登录中…' : (adminMode ? '进入管理后台' : '登录') }}
+    </button>
+
+    <div class="auth-form__foot">
+      <template v-if="!adminMode">
+        <span>还没有账号？</span><a href="#/register">立即注册</a>
+        <span class="text-muted">·</span>
+        <button type="button" class="link-btn" @click="adminMode = true">管理员登录</button>
+      </template>
+      <template v-else>
+        <button type="button" class="link-btn" @click="adminMode = false">返回用户登录</button>
+      </template>
+    </div>
+
+    <div class="fs-12 text-muted" style="border-top:1px solid var(--border);padding-top:10px">
+      <div v-if="store.siteValue('site.announcement', '')">{{ store.siteValue('site.announcement', '') }}</div>
+      <div v-if="store.siteValue('site.customer_service', '')">
+        遇到问题请联系客服：{{ store.siteValue('site.customer_service', '') }}
+      </div>
+      <div v-if="store.siteValue('site.icp', '')">{{ store.siteValue('site.icp', '') }}</div>
+    </div>
+  </form>
+</div>

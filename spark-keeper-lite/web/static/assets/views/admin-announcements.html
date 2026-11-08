@@ -1,0 +1,117 @@
+<page-head title="公告管理"
+           :sub="'共 ' + total + ' 条公告　用户端「站内通知」页会展示生效中的公告'">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--primary btn--sm" @click="openCreate">
+    <icon name="plus" :size="14"></icon> 发布公告
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div class="card">
+  <data-table :loading="loading" :error="''" :empty="!items.length" :colspan="6"
+              empty-title="还没有公告"
+              empty-hint="发布公告后，用户会在「站内通知」页看到。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>标题</th><th>级别</th><th>状态</th><th>生效时间</th><th>更新时间</th>
+          <th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <template #empty-action>
+      <button class="btn btn--primary btn--sm" @click="openCreate">
+        <icon name="plus" :size="13"></icon> 发布公告
+      </button>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td>
+        <div class="flex-gap">
+          <span class="row-title">{{ row.title }}</span>
+          <span class="tag tag--primary" v-if="row.is_pinned">置顶</span>
+        </div>
+        <div class="row-sub ellipsis" :title="row.content">{{ row.content }}</div>
+      </td>
+      <td><status-tag kind="announcement" :value="row.level"></status-tag></td>
+      <td>
+        <span class="tag" :class="row.is_active ? 'tag--success' : 'tag--muted'">
+          {{ row.is_active ? '展示中' : '已隐藏' }}</span>
+      </td>
+      <td class="nowrap">
+        <div v-if="row.publish_at">
+          起 <time-text :value="row.publish_at" mode="minute"></time-text>
+        </div>
+        <div v-else class="text-muted">立即生效</div>
+        <div v-if="row.expire_at">
+          止 <time-text :value="row.expire_at" mode="minute"></time-text>
+        </div>
+      </td>
+      <td class="nowrap"><time-text :value="row.updated_at || row.created_at" mode="minute"></time-text></td>
+      <td class="is-actions">
+        <button class="btn btn--sm btn--soft" @click="openEdit(row)">
+          <icon name="edit" :size="13"></icon> 编辑</button>
+        <button class="btn btn--sm" @click="toggleActive(row)" :disabled="acting === row.id">
+          <icon name="power" :size="13"></icon> {{ row.is_active ? '隐藏' : '展示' }}</button>
+        <button class="btn btn--sm btn--ghost" @click="remove(row)" :disabled="acting === row.id" title="删除公告">
+          <icon name="trash" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<!-- 发布 / 编辑 -->
+<modal v-model="showForm" size="lg" :title="editing ? '编辑公告' : '发布公告'"
+       :sub="editing ? ('公告 #' + editing.id) : '发布后立即在用户端「站内通知」页展示'">
+  <alert type="error" :message="formError" v-if="formError"></alert>
+  <div class="form-grid">
+    <field label="公告标题" required :span="2">
+      <input class="input" v-model="form.title" placeholder="例如：8 月系统维护通知" maxlength="80" />
+    </field>
+    <field label="级别" required hint="影响用户端的颜色与图标">
+      <span class="select-wrap">
+        <select class="select" v-model="form.level">
+          <option v-for="o in OPTIONS.announcement_level" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </field>
+    <field label="选项">
+      <div class="check-list">
+        <label class="checkbox"><input type="checkbox" v-model="form.is_pinned" /><span>置顶显示</span></label>
+        <label class="checkbox"><input type="checkbox" v-model="form.is_active" /><span>立即展示</span></label>
+      </div>
+    </field>
+    <field label="公告内容" required :span="2" hint="支持多行文本，用户端按原文换行展示">
+      <textarea class="textarea" rows="6" v-model="form.content"
+                placeholder="请写清影响范围、预计时间与补偿方案。"></textarea>
+    </field>
+    <field label="开始时间" hint="留空表示立即生效">
+      <input class="input" type="datetime-local" v-model="form.publish_at" />
+    </field>
+    <field label="结束时间" hint="留空表示长期有效">
+      <input class="input" type="datetime-local" v-model="form.expire_at" />
+    </field>
+  </div>
+  <div class="alert alert--info mt-12 mb-0">
+    <icon name="info" :size="15" style="margin-top:2px"></icon>
+    <div class="alert__body">时间按浏览器本地时区填写，后端统一存 UTC。</div>
+  </div>
+  <template #foot>
+    <button class="btn" @click="showForm = false" :disabled="submitting">取消</button>
+    <button class="btn btn--primary" @click="save" :disabled="submitting"
+            :class="{ 'is-loading': submitting }">
+      <icon name="refresh" :size="14" class="spin" v-if="submitting"></icon>
+      <icon name="megaphone" :size="14" v-else></icon>
+      {{ editing ? '保存修改' : '发布公告' }}
+    </button>
+  </template>
+</modal>

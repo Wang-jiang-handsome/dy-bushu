@@ -1,0 +1,255 @@
+<page-head title="好友管理"
+           sub="这里的好友就是续火花的对象。昵称要与抖音里显示的一致，否则发送时会找不到人。">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--sm" @click="openHistory">
+    <icon name="list" :size="14"></icon> 发送台账
+  </button>
+  <button class="btn btn--sm" @click="sync" :disabled="acting === -1">
+    <icon name="refresh" :size="14"></icon> 从抖音同步
+  </button>
+  <button class="btn btn--sm" @click="openImport">
+    <icon name="upload" :size="14"></icon> 批量导入
+  </button>
+  <button class="btn btn--sm btn--danger" v-if="selectedIds.length" @click="batchRemove"
+          :disabled="batchDeleting">
+    <icon name="trash" :size="14"></icon> 删除选中（{{ selectedIds.length }}）
+  </button>
+  <button class="btn btn--primary btn--sm" @click="openCreate">
+    <icon name="plus" :size="14"></icon> 添加好友
+  </button>
+</page-head>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field">
+      <label class="field__label">所属账号</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.account_id" @change="search">
+          <option value="">全部账号</option>
+          <option v-for="a in accounts" :key="a.id" :value="a.id">
+            {{ a.nickname || a.remark || ('账号 #' + a.id) }}
+          </option>
+        </select>
+      </span>
+    </div>
+    <div class="field toolbar__grow">
+      <label class="field__label">关键字</label>
+      <input class="input" v-model="filters.keyword" placeholder="昵称 / 备注 / sec_uid"
+             @keyup.enter="search" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="error" :empty="!items.length" :colspan="8"
+              empty-title="还没有好友"
+              empty-hint="可以手动添加、批量粘贴导入，或从抖音最近会话同步。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th style="width:34px">
+            <input type="checkbox" :checked="items.length && selectedIds.length === items.length"
+                   @change="toggleSelectAll" title="全选本页" />
+          </th>
+          <th>昵称</th><th>所属账号</th><th>抖音号 / sec_uid</th><th>备注</th>
+          <th class="is-num">火花天数</th><th>最近发送</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <template #empty-action>
+      <button class="btn btn--primary btn--sm" @click="openCreate">
+        <icon name="plus" :size="13"></icon> 添加好友
+      </button>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td>
+        <input type="checkbox" :checked="isSelected(row)" @change="toggleSelect(row)" />
+      </td>
+      <td>
+        <span class="row-title">{{ row.nickname }}</span>
+        <div class="row-sub" v-if="row.enabled === false">
+          <span class="tag tag--muted">已停用</span>
+        </div>
+      </td>
+      <td>{{ accountName(row.account_id) }}</td>
+      <td class="is-mono">
+        <span v-if="row.sec_uid" class="ellipsis" :title="row.sec_uid">{{ row.sec_uid }}</span>
+        <span v-else class="text-muted">按昵称匹配</span>
+        <copy-button v-if="row.sec_uid" :text="row.sec_uid" icon-only></copy-button>
+      </td>
+      <td><span class="ellipsis" :title="row.remark">{{ row.remark || '—' }}</span></td>
+      <td class="is-num">
+        <span class="cell-strong">{{ row.spark_days || 0 }}</span>
+        <span class="text-muted fs-12"> 天</span>
+      </td>
+      <td>
+        <span v-if="row.last_sent_at">
+          <time-text :value="row.last_sent_at" mode="minute"></time-text>
+          <div class="row-sub">
+            <status-tag kind="run" :value="row.last_status || 'empty'"></status-tag>
+          </div>
+        </span>
+        <span v-else class="text-muted">从未发送</span>
+      </td>
+      <td class="is-actions">
+        <button class="btn btn--sm btn--ghost" @click="openEdit(row)" title="编辑">
+          <icon name="edit" :size="13"></icon></button>
+        <button class="btn btn--sm btn--ghost" @click="toggleFriend(row)"
+                :disabled="acting === row.id"
+                :title="row.enabled === false ? '启用该好友' : '停用该好友'">
+          <icon name="power" :size="13"></icon>
+        </button>
+        <button class="btn btn--sm btn--ghost" @click="remove(row)" title="删除好友">
+          <icon name="trash" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<!-- 添加 / 编辑好友 -->
+<modal v-model="showForm" :title="editing ? '编辑好友' : '添加好友'"
+       :sub="editing ? ('好友 #' + editing.id) : '昵称需要与抖音里显示的一致'">
+  <alert type="error" :message="formError" v-if="formError"></alert>
+  <div class="form-grid form-grid--1">
+    <field label="所属抖音账号" required>
+      <span class="select-wrap">
+        <select class="select" v-model="form.account_id">
+          <option value="">请选择账号</option>
+          <option v-for="a in accounts" :key="a.id" :value="a.id">
+            {{ a.nickname || a.remark || ('账号 #' + a.id) }}
+          </option>
+        </select>
+      </span>
+    </field>
+    <field label="好友昵称" required hint="抖音聊天列表里显示的名字，务必完全一致">
+      <input class="input" v-model="form.nickname" placeholder="例如：小明" maxlength="60" />
+    </field>
+    <field label="sec_uid" hint="选填。抖音账号的唯一标识，填写后匹配更准确（可从好友主页链接获取）">
+      <input class="input is-mono" v-model="form.sec_uid" placeholder="MS4wLjABAAAA..." />
+    </field>
+    <field label="备注" hint="选填，仅自己可见">
+      <input class="input" v-model="form.remark" placeholder="例如：同事 / 老同学" maxlength="120" />
+    </field>
+  </div>
+  <template #foot>
+    <button class="btn" @click="showForm = false" :disabled="submitting">取消</button>
+    <button class="btn btn--primary" @click="saveForm" :disabled="submitting"
+            :class="{ 'is-loading': submitting }">
+      <icon name="refresh" :size="14" class="spin" v-if="submitting"></icon>
+      {{ editing ? '保存' : '添加' }}
+    </button>
+  </template>
+</modal>
+
+<!-- 批量导入 -->
+<modal v-model="showImport" title="批量导入好友" sub="每行一个昵称，也可以写成「昵称,sec_uid」">
+  <alert type="error" :message="importError" v-if="importError"></alert>
+  <div class="form-grid form-grid--1">
+    <field label="导入到账号" required>
+      <span class="select-wrap">
+        <select class="select" v-model="importAccountId">
+          <option value="">请选择账号</option>
+          <option v-for="a in accounts" :key="a.id" :value="a.id">
+            {{ a.nickname || a.remark || ('账号 #' + a.id) }}
+          </option>
+        </select>
+      </span>
+    </field>
+    <field label="好友列表" required hint="支持「昵称」或「昵称,sec_uid」两种格式；重复昵称会自动跳过">
+      <textarea class="textarea" rows="7" v-model="importText"
+                placeholder="小明&#10;小红,MS4wLjABAAAAxxxx&#10;老王"></textarea>
+    </field>
+  </div>
+  <div class="alert alert--info mt-12 mb-0" v-if="importResult">
+    <icon name="check-circle" :size="15" style="margin-top:2px"></icon>
+    <div class="alert__body">
+      导入结果：
+      <span v-if="importResult.imported !== undefined">成功 {{ importResult.imported }} 条</span>
+      <span v-if="importResult.created !== undefined">成功 {{ importResult.created }} 条</span>
+      <span v-if="importResult.skipped !== undefined"> · 跳过 {{ importResult.skipped }} 条</span>
+      <span v-if="importResult.failed !== undefined"> · 失败 {{ importResult.failed }} 条</span>
+      <span v-if="importResult.imported === undefined && importResult.created === undefined
+                   && importResult.skipped === undefined">已提交，请查看列表确认结果</span>
+    </div>
+  </div>
+  <template #foot>
+    <button class="btn" @click="showImport = false" :disabled="importing">关闭</button>
+    <button class="btn btn--primary" @click="doImport" :disabled="importing"
+            :class="{ 'is-loading': importing }">
+      <icon name="refresh" :size="14" class="spin" v-if="importing"></icon>
+      <icon name="upload" :size="14" v-else></icon> 开始导入
+    </button>
+  </template>
+</modal>
+
+<!-- 发送台账 -->
+<drawer v-model="showHistory" size="lg" title="发送台账" sub="哪天给谁发过什么内容">
+  <div class="toolbar" style="padding:0 0 12px;background:none;border:0">
+    <div class="field">
+      <label class="field__label">账号</label>
+      <span class="select-wrap">
+        <select class="select" v-model="historyFilters.account_id" @change="historyPage = 1; loadHistory()">
+          <option value="">全部账号</option>
+          <option v-for="a in accounts" :key="a.id" :value="a.id">
+            {{ a.nickname || a.remark || ('账号 #' + a.id) }}
+          </option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">开始日期</label>
+      <input class="input" type="date" v-model="historyFilters.start_date" @change="historyPage = 1; loadHistory()" />
+    </div>
+    <div class="field">
+      <label class="field__label">结束日期</label>
+      <input class="input" type="date" v-model="historyFilters.end_date" @change="historyPage = 1; loadHistory()" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="historyPage = 1; loadHistory()">
+        <icon name="search" :size="13"></icon> 查询</button>
+    </div>
+  </div>
+
+  <div class="alert alert--info" v-if="historySummary">
+    <icon name="info" :size="15" style="margin-top:2px"></icon>
+    <div class="alert__body">
+      {{ historySummary.date || '今天' }} 已发送
+      <b>{{ historySummary.sent_today || 0 }}</b> 条，覆盖好友
+      <b>{{ historySummary.friends_today || 0 }}</b> 位。
+    </div>
+  </div>
+
+  <data-table :loading="historyLoading" :error="historyError" :empty="!history.length" :colspan="4"
+              empty-title="暂无发送记录"
+              empty-hint="任务执行成功后会在这里留下台账，可用于确认今天到底发没发。"
+              @retry="loadHistory">
+    <template #head>
+      <thead><tr><th>发送日期</th><th>好友</th><th>所属账号</th><th>内容</th></tr></thead>
+    </template>
+    <tr v-for="row in history" :key="row.id">
+      <td class="nowrap">
+        {{ row.send_date || dateText(row.created_at) }}
+        <div class="row-sub" v-if="row.created_at">
+          <time-text :value="row.created_at" mode="clock"></time-text>
+        </div>
+      </td>
+      <td>{{ historyFriend(row) }}</td>
+      <td>{{ accountName(row.account_id) }}</td>
+      <td><span class="ellipsis" :title="row.message">{{ row.message || '—' }}</span></td>
+    </tr>
+  </data-table>
+  <pager :page="historyPage" :pages="historyPages" :total="historyTotal" :page-size="20" :show-size="false"
+         @change="p => { historyPage = p; loadHistory(); }"></pager>
+
+  <template #foot>
+    <button class="btn" @click="showHistory = false">关闭</button>
+  </template>
+</drawer>

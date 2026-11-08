@@ -1,0 +1,138 @@
+<page-head title="代理管理"
+           :sub="'共 ' + total + ' 个代理　绑定代理后，账号的浏览器请求会走代理出口 IP'">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--primary btn--sm" @click="openCreate">
+    <icon name="plus" :size="14"></icon> 新增代理
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div class="card">
+  <data-table :loading="loading" :error="''" :empty="!items.length" :colspan="8"
+              empty-title="还没有配置代理"
+              empty-hint="多账号场景建议每个账号用不同出口 IP，可显著降低风控概率。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>名称</th><th>地址</th><th>地区</th><th>认证</th><th>状态</th>
+          <th>最近检测</th><th class="is-num">绑定账号</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <template #empty-action>
+      <button class="btn btn--primary btn--sm" @click="openCreate">
+        <icon name="plus" :size="13"></icon> 新增代理
+      </button>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td>
+        <div class="row-title">{{ row.name }}</div>
+        <div class="row-sub" v-if="row.remark">{{ row.remark }}</div>
+      </td>
+      <td class="is-mono">
+        {{ row.scheme }}://{{ row.host }}:{{ row.port }}
+        <copy-button :text="row.scheme + '://' + row.host + ':' + row.port" icon-only></copy-button>
+      </td>
+      <td>{{ row.region || '—' }}</td>
+      <td>
+        <span v-if="row.username" class="fs-13">{{ row.username }}</span>
+        <span v-else class="text-muted">免认证</span>
+        <div class="row-sub" v-if="row.has_password"><span class="tag tag--muted">已设密码</span></div>
+      </td>
+      <td><status-tag kind="proxy" :value="row.status"></status-tag></td>
+      <td class="nowrap">
+        <span v-if="row.last_check_at">
+          <time-text :value="row.last_check_at" mode="ago"></time-text>
+          <div class="row-sub" :class="row.last_check_ok ? 'text-success' : 'text-danger'">
+            {{ row.last_check_ok ? '可用' : '不可用' }}
+          </div>
+        </span>
+        <span v-else class="text-muted">未检测</span>
+      </td>
+      <td class="is-num">{{ row.account_count || 0 }}</td>
+      <td class="is-actions">
+        <button class="btn btn--sm" @click="check(row)" :disabled="checking[row.id]"
+                :class="{ 'is-loading': checking[row.id] }">
+          <icon name="wifi" :size="13"></icon> 测试</button>
+        <button class="btn btn--sm btn--soft" @click="openEdit(row)">
+          <icon name="edit" :size="13"></icon> 编辑</button>
+        <button class="btn btn--sm btn--ghost" @click="remove(row)" :disabled="acting === row.id" title="删除代理">
+          <icon name="trash" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<div class="card">
+  <div class="card__head"><div class="card__title">使用建议</div></div>
+  <div class="card__body fs-13 text-2">
+    <p>· 支持 <code>http</code> / <code>https</code> / <code>socks5</code> 三种协议。</p>
+    <p>· 代理密码使用对称加密存储，前端不会回显已保存的密码，留空表示不修改。</p>
+    <p class="mb-0">· 「测试」会真实发起一次连接（超时几秒），失败会显示原因，便于快速排查失效代理。</p>
+  </div>
+</div>
+
+<!-- 新增 / 编辑 -->
+<modal v-model="showForm" :title="editing ? ('编辑代理：' + editing.name) : '新增代理'">
+  <alert type="error" :message="formError" v-if="formError"></alert>
+  <div class="form-grid">
+    <field label="名称" required hint="便于识别，例如「上海电信 1」">
+      <input class="input" v-model="form.name" placeholder="例如：上海出口 A" maxlength="40" />
+    </field>
+    <field label="协议" required>
+      <span class="select-wrap">
+        <select class="select" v-model="form.scheme">
+          <option value="http">HTTP</option>
+          <option value="https">HTTPS</option>
+          <option value="socks5">SOCKS5</option>
+        </select>
+      </span>
+    </field>
+    <field label="主机" required hint="IP 或域名">
+      <input class="input is-mono" v-model="form.host" placeholder="127.0.0.1" />
+    </field>
+    <field label="端口" required>
+      <input class="input" type="number" min="1" max="65535" v-model.number="form.port" />
+    </field>
+    <field label="用户名" hint="选填，免认证代理留空">
+      <input class="input" v-model="form.username" placeholder="选填" autocomplete="off" />
+    </field>
+    <field label="密码" :hint="editing ? '留空表示不修改已保存的密码' : '选填'">
+      <input class="input" type="password" v-model="form.password" placeholder="选填"
+             autocomplete="new-password" />
+    </field>
+    <field label="地区" hint="选填，例如「上海」「香港」">
+      <input class="input" v-model="form.region" placeholder="选填" maxlength="20" />
+    </field>
+    <field label="状态">
+      <span class="select-wrap">
+        <select class="select" v-model="form.status">
+          <option value="active">可用</option>
+          <option value="disabled">停用</option>
+          <option value="dead">不可用</option>
+        </select>
+      </span>
+    </field>
+    <field label="备注" :span="2">
+      <input class="input" v-model="form.remark" placeholder="选填，例如带宽、过期时间" maxlength="120" />
+    </field>
+  </div>
+  <template #foot>
+    <button class="btn" @click="showForm = false" :disabled="submitting">取消</button>
+    <button class="btn btn--primary" @click="save" :disabled="submitting"
+            :class="{ 'is-loading': submitting }">
+      <icon name="refresh" :size="14" class="spin" v-if="submitting"></icon>
+      {{ editing ? '保存' : '添加代理' }}
+    </button>
+  </template>
+</modal>

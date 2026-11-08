@@ -1,0 +1,276 @@
+<page-head title="套餐购买"
+           sub="套餐决定可绑定的抖音账号数与每天可执行次数；也可以用卡密直接开通或续期。">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--sm" v-if="canRecharge()" @click="openRecharge">
+    <icon name="card" :size="14"></icon> 余额充值
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<!-- 未启用在线支付：只走卡密，不显示假按钮 -->
+<div class="alert alert--warn" v-if="!payEnabled">
+  <icon name="alert" :size="16" style="margin-top:2px"></icon>
+  <div class="alert__body">
+    本站<strong>未启用在线支付</strong>。开通或续期请使用卡密兑换：在
+    <a href="#/card">卡密兑换</a> 页输入卡密即可立即生效；需要在线支付请联系管理员配置支付通道。
+  </div>
+</div>
+
+<!-- 当前套餐 -->
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">我的套餐</div>
+    <div class="card__actions">
+      <span class="tag" :class="currentQuota.active ? 'tag--success' : 'tag--warn'">
+        {{ currentQuota.active ? '生效中' : '未开通' }}
+      </span>
+    </div>
+  </div>
+  <div class="card__body">
+    <div class="grid grid--3">
+      <div>
+        <div class="stat__label">套餐</div>
+        <div class="stat__value" style="font-size:18px">
+          {{ currentQuota.package_name || '未开通套餐' }}
+        </div>
+        <div class="stat__hint" v-if="currentQuota.expire_text">{{ currentQuota.expire_text }}</div>
+        <div class="stat__hint" v-else-if="currentQuota.expire_at">
+          到期：<time-text :value="currentQuota.expire_at" mode="minute"></time-text>
+        </div>
+        <div class="stat__hint" v-else>开通后即可添加托管账号</div>
+      </div>
+      <div>
+        <div class="stat__label">托管账号</div>
+        <div class="stat__value">{{ currentQuota.account_used || 0 }}
+          <small>/ {{ currentQuota.account_limit || 0 }}</small></div>
+        <div class="progress mt-8">
+          <div class="progress__bar" :class="{ 'progress__bar--warn': accountPct >= 80 }"
+               :style="{ width: accountPct + '%' }"></div>
+        </div>
+      </div>
+      <div>
+        <div class="stat__label">今日执行次数</div>
+        <div class="stat__value">{{ currentQuota.daily_task_used || 0 }}
+          <small>/ {{ currentQuota.daily_task_unlimited ? '∞' : (currentQuota.daily_task_limit || 0) }}</small></div>
+        <div class="progress mt-8">
+          <div class="progress__bar" :class="{ 'progress__bar--warn': taskPct >= 80 }"
+               :style="{ width: taskPct + '%' }"></div>
+        </div>
+        <div class="stat__hint" v-if="currentQuota.bonus_task_count">
+          含赠送额度 {{ currentQuota.bonus_task_count }} 次
+          <span v-if="currentQuota.bonus_expire_at">
+            （至 <time-text :value="currentQuota.bonus_expire_at" mode="date"></time-text>）
+          </span>
+        </div>
+      </div>
+    </div>
+    <div class="kv-list mt-12">
+      <div class="kv-list__row">
+        <div class="kv-list__k">账户余额</div>
+        <div class="kv-list__v">
+          {{ money(user.balance_cents) }}
+          <span class="text-muted fs-12">可用于余额支付套餐</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 套餐卡片 -->
+<div class="section-title">选择套餐</div>
+<div v-if="loading" class="grid grid--3">
+  <div class="card" v-for="n in 3" :key="n"><div class="card__body"><div class="skeleton skeleton--block"></div></div></div>
+</div>
+<empty-state v-else-if="!packages.length" icon="box" title="暂无可用套餐"
+             hint="管理员还没有配置套餐，或套餐都已下架。可以先用卡密兑换开通。">
+  <a class="btn btn--sm" href="#/card">去卡密兑换</a>
+</empty-state>
+<div v-else class="grid grid--3">
+  <div class="card plan-card" v-for="pkg in packages" :key="pkg.id"
+       :class="{ 'is-current': isCurrent(pkg) }"
+       :style="pkg.is_active === false ? 'opacity:.6' : ''">
+    <div class="plan-card__wrap">
+      <div class="plan-card__ribbon" v-if="isCurrent(pkg)">当前套餐</div>
+      <div class="card__body" style="display:flex;flex-direction:column;height:100%">
+        <div class="flex-between">
+          <div class="card__title">{{ pkg.name || pkg.code }}</div>
+          <span class="tag tag--muted" v-if="pkg.is_active === false">已下架</span>
+        </div>
+        <div class="mt-8">
+          <span class="price">{{ money(pkg.price_cents) }}</span>
+          <span class="price-origin"
+                v-if="pkg.original_cents && pkg.original_cents > pkg.price_cents">
+            {{ money(pkg.original_cents) }}
+          </span>
+        </div>
+        <div class="fs-12 text-muted">有效期 {{ pkg.days || 30 }} 天</div>
+        <div class="fs-13 text-2 mt-8">{{ pkg.description || '' }}</div>
+        <ul class="plan-list">
+          <li v-for="(f, i) in (pkg.features || [])" :key="i">
+            <icon name="check" :size="13"></icon><span>{{ f }}</span>
+          </li>
+          <li><icon name="check" :size="13"></icon>
+            <span>{{ pkg.account_limit || 1 }} 个托管账号</span></li>
+          <li><icon name="check" :size="13"></icon>
+            <span>每天 {{ pkg.daily_task_limit || 1 }} 次自动执行</span></li>
+        </ul>
+        <div style="margin-top:auto;padding-top:14px">
+          <button class="btn btn--primary btn--block" :disabled="pkg.is_active === false || buying === pkg.id"
+                  :class="{ 'is-loading': buying === pkg.id }" @click="buy(pkg)">
+            <icon name="refresh" :size="14" class="spin" v-if="buying === pkg.id"></icon>
+            <icon name="cart" :size="14" v-else></icon>
+            {{ isCurrent(pkg) ? '续期 / 购买' : (payEnabled ? '立即购买' : '用卡密开通') }}
+          </button>
+          <div class="fs-12 text-muted text-center" style="margin-top:6px" v-if="pkg.is_active === false">
+            该套餐已下架，暂不可购买
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 支付方式（下单前选择） -->
+<div class="card mt-16" v-if="packages.length">
+  <div class="card__head">
+    <div class="card__title">支付方式</div>
+    <div class="card__sub">下单时会使用这里选中的渠道</div>
+  </div>
+  <div class="card__body">
+    <div v-if="payMethodsError" class="fs-13 text-muted">
+      支付方式列表暂不可用（{{ payMethodsError }}），当前按{{ payEnabled ? '在线支付' : '卡密兑换' }}处理。
+    </div>
+    <div class="check-list" v-else>
+      <label class="radio" v-for="m in enabledMethods" :key="m.channel"
+             :class="{ 'text-muted': m.channel !== 'card' && !payEnabled }">
+        <input type="radio" :value="m.channel" v-model="methodChannel"
+               :disabled="m.channel !== 'card' && !payEnabled" />
+        <span>
+          <icon :name="m.icon === 'key' ? 'key' : 'qr'" :size="14" style="vertical-align:-2px"></icon>
+          {{ m.name || statusText('channel', m.channel) }}
+          <span class="tag tag--muted" v-if="m.channel === 'card'">推荐</span>
+        </span>
+      </label>
+      <span v-if="!enabledMethods.length" class="text-muted fs-13">
+        暂无可用支付方式，请使用卡密兑换。
+      </span>
+    </div>
+    <div class="fs-12 text-muted mt-8" v-if="!payEnabled">
+      未启用在线支付，其它渠道已被隐藏。
+    </div>
+  </div>
+</div>
+
+<!-- 下单结果 / 收银台 -->
+<modal v-model="showPay" title="订单支付" :sub="order ? ('订单号 ' + (order.order_no || '—')) : ''"
+       :close-on-backdrop="false" @close="closePay">
+  <template v-if="order">
+    <div class="alert" :class="orderPaid ? 'alert--success' : 'alert--info'">
+      <icon :name="orderPaid ? 'check-circle' : 'clock'" :size="16" style="margin-top:2px"></icon>
+      <div class="alert__body">
+        <span v-if="orderPaid">支付成功，套餐已生效。</span>
+        <span v-else>订单已创建，状态：<status-tag kind="order" :value="order.status"></status-tag></span>
+      </div>
+    </div>
+
+    <div class="desc">
+      <div class="desc__k">订单号</div>
+      <div class="desc__v">
+        <span class="is-mono">{{ order.order_no || '—' }}</span>
+        <copy-button :text="order.order_no" label="复制" v-if="order.order_no"></copy-button>
+      </div>
+      <div class="desc__k">金额</div>
+      <div class="desc__v"><b>{{ money(order.amount_cents) }}</b></div>
+      <div class="desc__k">支付方式</div>
+      <div class="desc__v"><status-tag kind="channel" :value="order.channel"></status-tag></div>
+      <div class="desc__k">过期时间</div>
+      <div class="desc__v">
+        <span v-if="order.expire_at"><time-text :value="order.expire_at" mode="time"></time-text></span>
+        <span v-else class="text-muted">—</span>
+      </div>
+    </div>
+
+    <!-- 卡密渠道 -->
+    <div class="mt-12" v-if="order.channel === 'card' && !orderPaid">
+      <div class="alert alert--warn mb-0">
+        <icon name="key" :size="16" style="margin-top:2px"></icon>
+        <div class="alert__body">
+          该订单使用卡密支付：请到「卡密兑换」页输入卡密，兑换成功后本订单会变为已支付。
+          <div class="mt-8"><a class="btn btn--sm btn--primary" href="#/card" @click="closePay">去卡密兑换</a></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 在线支付：二维码 / 跳转链接 -->
+    <div class="mt-12" v-if="order.channel !== 'card' && !orderPaid">
+      <div class="qr-box" v-if="orderQr"><img :src="orderQr" alt="支付二维码" /></div>
+      <div class="text-center fs-13 text-muted mt-8" v-if="orderQr">请用手机扫码完成支付</div>
+      <div class="copy-row mt-8" v-if="orderQrText">
+        <span class="fs-13 text-2">支付链接</span>
+        <code>{{ orderQrText }}</code>
+        <copy-button :text="orderQrText"></copy-button>
+      </div>
+      <div class="mt-12" v-if="order.pay_url">
+        <a class="btn btn--primary btn--block" :href="order.pay_url" target="_blank" rel="noopener">
+          <icon name="external" :size="14"></icon> 打开收银台完成支付
+        </a>
+      </div>
+      <div class="fs-12 text-muted text-center mt-8">
+        支付完成后本页会自动刷新状态（每 3 秒查询一次）。
+      </div>
+    </div>
+
+    <div class="btn-row mt-16" v-if="!orderPaid">
+      <button class="btn btn--sm" @click="queryOrder" :disabled="paying">
+        <icon name="refresh" :size="13" :class="{ spin: paying }"></icon> 我已完成支付，立即查单
+      </button>
+      <button class="btn btn--sm btn--ghost" @click="nav.go('/orders'); closePay()">
+        <icon name="cart" :size="13"></icon> 查看我的订单
+      </button>
+    </div>
+  </template>
+  <template #foot>
+    <button class="btn" @click="closePay">关闭</button>
+    <button class="btn btn--primary" v-if="orderPaid" @click="nav.go('/accounts'); closePay()">
+      去添加账号
+    </button>
+  </template>
+</modal>
+
+<!-- 余额充值 -->
+<modal v-model="showRecharge" title="余额充值" sub="充值到账户余额，可用于余额支付套餐">
+  <div class="form-grid form-grid--1">
+    <field label="充值金额（元）" required hint="充值后可在下单时选择「余额支付」">
+      <input class="input" v-model="rechargeYuan" placeholder="例如 10" />
+    </field>
+    <field label="支付方式" required>
+      <span class="select-wrap">
+        <select class="select" v-model="rechargeChannel">
+          <option v-for="m in enabledMethods.filter(x => x.channel !== 'card')" :key="m.channel"
+                  :value="m.channel">{{ m.name || statusText('channel', m.channel) }}</option>
+          <option value="balance">余额支付（测试用）</option>
+        </select>
+      </span>
+    </field>
+  </div>
+  <div class="btn-row mt-12">
+    <span class="fs-12 text-muted">当前余额：{{ money(user.balance_cents) }}</span>
+  </div>
+  <div class="alert alert--success mt-12 mb-0" v-if="rechargeOrder && rechargeOrder.status === 'paid'">
+    <icon name="check-circle" :size="15" style="margin-top:2px"></icon>
+    <div class="alert__body">充值成功，余额已更新。</div>
+  </div>
+  <template #foot>
+    <button class="btn" @click="showRecharge = false" :disabled="recharging">取消</button>
+    <button class="btn btn--primary" @click="recharge" :disabled="recharging"
+            :class="{ 'is-loading': recharging }">
+      <icon name="refresh" :size="14" class="spin" v-if="recharging"></icon> 提交充值
+    </button>
+  </template>
+</modal>

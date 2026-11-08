@@ -1,0 +1,175 @@
+<page-head title="管理概览" :sub="'全站运营数据' + (lastLoadedAt ? '　更新于 ' + lastLoadedAt : '')">
+  <label class="switch">
+    <input type="checkbox" :checked="autoRefresh" @change="toggleAuto" />
+    <span class="switch__track"></span>
+    <span class="fs-13">自动刷新</span>
+  </label>
+  <button class="btn btn--sm" @click="load(); loadLogs()" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 立即刷新
+  </button>
+  <a class="btn btn--sm" href="#/admin/logs"><icon name="list" :size="14"></icon> 查看日志</a>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div class="grid grid--4 mb-16">
+  <stat-card label="用户总数" icon="users" tone="info"
+             :value="users.total || 0"
+             :hint="'今日新增 ' + (users.today_new || 0) + ' · 7 日活跃 ' + (users.active_7d || 0)"></stat-card>
+  <stat-card label="托管账号" icon="smartphone"
+             :value="accounts.total || 0"
+             :hint="'登录正常 ' + (accounts.online || 0) + ' · 失效 ' + (accounts.expired || 0)"></stat-card>
+  <stat-card label="定时任务" icon="clock" tone="success"
+             :value="tasks.total || 0"
+             :hint="'启用 ' + (tasks.enabled || 0) + ' · 今日执行 ' + (tasks.today_runs || 0)"></stat-card>
+  <stat-card label="累计收入" icon="trend" tone="warn"
+             :value="money(orders.revenue_cents)"
+             :hint="'今日 ' + money(orders.today_revenue_cents)"></stat-card>
+</div>
+
+<div class="grid grid--4 mb-16">
+  <stat-card label="订单" icon="cart"
+             :value="orders.total || 0"
+             :hint="'已支付 ' + (orders.paid || 0) + ' · 待支付 ' + (orders.pending || 0)"></stat-card>
+  <stat-card label="退款订单" icon="refresh"
+             :value="orders.refunded || 0" hint="已标记退款"></stat-card>
+  <stat-card label="卡密" icon="key"
+             :value="cards.total || 0"
+             :hint="'未使用 ' + (cards.unused || 0) + ' · 已使用 ' + (cards.used || 0)"></stat-card>
+  <stat-card label="今日执行成功" icon="check-circle" tone="success"
+             :value="tasks.today_success || 0"
+             :hint="'执行 ' + (tasks.today_runs || 0) + ' 次'"></stat-card>
+</div>
+
+<div class="grid grid--sidebar">
+  <div>
+    <div class="card">
+      <div class="card__head">
+        <div>
+          <div class="card__title">近 7 天运营趋势</div>
+          <div class="card__sub">柱高表示每日执行次数，蓝色为成功</div>
+        </div>
+        <div class="card__actions legend">
+          <span class="legend__key"><i class="legend__dot"></i> 执行次数</span>
+          <span class="legend__key"><i class="legend__dot legend__dot--fail"></i> 收入（分）</span>
+        </div>
+      </div>
+      <div class="card__body">
+        <div v-if="loading && !trend.length" class="skeleton skeleton--block"></div>
+        <empty-state v-else-if="!trend.length" icon="chart" title="暂无趋势数据"
+                     hint="有任务执行或订单后，这里会显示最近 7 天的变化。"></empty-state>
+        <div v-else>
+          <div class="bars">
+            <div class="bars__col" v-for="row in trend" :key="row.date"
+                 :title="row.date + '：执行 ' + (row.runs||0) + ' 次，成功 ' + (row.success||0) +
+                        '，订单 ' + (row.orders||0) + '，收入 ' + money(row.revenue_cents)">
+              <div class="bars__stack">
+                <div class="bars__bar bars__bar--fail" :style="{ height: revenueHeight(row) }"
+                     v-if="row.revenue_cents"></div>
+                <div class="bars__bar" :style="{ height: barHeight(row, 'runs') }" v-if="row.runs"></div>
+              </div>
+              <div class="bars__label">{{ (row.date || '').slice(5) }}</div>
+            </div>
+          </div>
+          <div class="table-wrap mt-16">
+            <table class="table">
+              <thead>
+                <tr><th>日期</th><th class="is-num">执行</th><th class="is-num">成功</th>
+                  <th class="is-num">订单</th><th class="is-num">收入</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in trend" :key="'t-' + row.date">
+                  <td class="is-mono">{{ row.date }}</td>
+                  <td class="is-num">{{ row.runs || 0 }}</td>
+                  <td class="is-num text-success">{{ row.success || 0 }}</td>
+                  <td class="is-num">{{ row.orders || 0 }}</td>
+                  <td class="is-num"><money :cents="row.revenue_cents"></money></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__head">
+        <div class="card__title">最近错误日志</div>
+        <div class="card__actions"><a class="link-btn" href="#/admin/logs">全部日志</a></div>
+      </div>
+      <div class="card__body">
+        <div v-if="logsLoading"><loading text="正在加载…"></loading></div>
+        <alert type="error" :message="logsError" v-else-if="logsError"></alert>
+        <empty-state v-else-if="!logs.length" icon="check-circle" title="最近没有错误日志"
+                     hint="系统运行正常。"></empty-state>
+        <div v-else>
+          <div class="log-line" v-for="row in logs" :key="row.id">
+            <div class="log-line__time"><time-text :value="row.created_at" mode="minute"></time-text></div>
+            <div><status-tag kind="level" :value="row.level"></status-tag></div>
+            <div class="log-line__msg">
+              <div>{{ row.message }}</div>
+              <div class="log-line__src">{{ row.source || '—' }}
+                <span v-if="row.username"> · {{ row.username }}</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card__head"><div class="card__title">快捷管理入口</div></div>
+      <div class="card__body">
+        <div class="btn-row">
+          <a class="btn btn--sm btn--block" href="#/admin/users"><icon name="users" :size="14"></icon> 用户管理</a>
+          <a class="btn btn--sm btn--block" href="#/admin/orders"><icon name="cart" :size="14"></icon> 订单管理</a>
+          <a class="btn btn--sm btn--block" href="#/admin/cards"><icon name="key" :size="14"></icon> 卡密管理</a>
+          <a class="btn btn--sm btn--block" href="#/admin/packages"><icon name="box" :size="14"></icon> 套餐管理</a>
+          <a class="btn btn--sm btn--block" href="#/admin/configs"><icon name="sliders" :size="14"></icon> 站点配置</a>
+          <a class="btn btn--sm btn--block" href="#/admin/system"><icon name="server" :size="14"></icon> 系统环境</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__head"><div class="card__title">待处理事项</div></div>
+      <div class="card__body">
+        <div class="kv-list">
+          <div class="kv-list__row">
+            <div class="kv-list__k">待支付订单</div>
+            <div class="kv-list__v">
+              {{ orders.pending || 0 }} 笔
+              <a class="link-btn" style="margin-left:6px" href="#/admin/orders">去处理</a>
+            </div>
+          </div>
+          <div class="kv-list__row">
+            <div class="kv-list__k">账号登录态失效</div>
+            <div class="kv-list__v">
+              {{ accounts.expired || 0 }} 个
+              <a class="link-btn" style="margin-left:6px" href="#/admin/accounts">去查看</a>
+            </div>
+          </div>
+          <div class="kv-list__row">
+            <div class="kv-list__k">未使用卡密</div>
+            <div class="kv-list__v">{{ cards.unused || 0 }} 张</div>
+          </div>
+          <div class="kv-list__row">
+            <div class="kv-list__k">已禁用用户</div>
+            <div class="kv-list__v">{{ users.disabled || 0 }} 个</div>
+          </div>
+        </div>
+        <div class="alert alert--warn mt-12 mb-0" v-if="(orders.pending || 0) > 0">
+          <icon name="alert" :size="15" style="margin-top:2px"></icon>
+          <div class="alert__body">
+            有 {{ orders.pending }} 笔待支付订单。人工收款到账后，可在订单管理里点「确认收款」补单。
+            <div class="mt-8"><a class="btn btn--sm" href="#/admin/orders">去订单管理</a></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,78 @@
+<page-head title="运行日志"
+           sub="任务调度、浏览器自动化、登录等模块的运行日志，排查问题时先看这里。">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+</page-head>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field">
+      <label class="field__label">级别</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.level" @change="search">
+          <option v-for="o in levelOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">来源模块</label>
+      <input class="input" v-model="filters.source" placeholder="如 task.runner"
+             @keyup.enter="search" style="width:160px" />
+    </div>
+    <div class="field toolbar__grow">
+      <label class="field__label">关键字</label>
+      <input class="input" v-model="filters.keyword" placeholder="日志内容关键字"
+             @keyup.enter="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">开始日期</label>
+      <input class="input" type="date" v-model="filters.start_date" @change="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">结束日期</label>
+      <input class="input" type="date" v-model="filters.end_date" @change="search" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <div class="card__body">
+    <div v-if="loading" class="loading-inline"><icon name="refresh" :size="15" class="spin"></icon> 正在加载日志…</div>
+
+    <alert type="error" :message="error" v-else-if="error">
+      <span>{{ error }}</span>
+      <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+    </alert>
+
+    <empty-state v-else-if="!items.length" icon="list" title="没有符合条件的日志"
+                 hint="调整筛选条件，或等任务执行后再来看。"></empty-state>
+
+    <template v-else>
+      <div class="fs-12 text-muted mb-8">第 {{ page }} 页，共 {{ total }} 条</div>
+      <div class="log-line" v-for="row in items" :key="row.id">
+        <div class="log-line__time">
+          <time-text :value="row.created_at" mode="time"></time-text>
+          <div>{{ agoText(row.created_at) }}</div>
+        </div>
+        <div style="flex:0 0 auto"><status-tag kind="level" :value="row.level"></status-tag></div>
+        <div class="log-line__msg">
+          <div>{{ row.message }}</div>
+          <div class="log-line__src">
+            <span v-if="row.source">来源：{{ row.source }}</span>
+            <span v-if="row.scope"> · 范围：{{ statusText('scope', row.scope) }}</span>
+            <button v-if="hasContext(row)" class="link-btn" style="margin-left:8px" @click="toggle(row)">
+              {{ expanded[row.id] ? '收起详情' : '查看详情' }}
+            </button>
+          </div>
+          <pre class="code-block mt-8" v-if="expanded[row.id] && hasContext(row)">{{ contextText(row) }}</pre>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>

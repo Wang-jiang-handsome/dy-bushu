@@ -1,0 +1,98 @@
+<page-head title="站内通知"
+           :sub="unread ? ('有 ' + unread + ' 条未读通知') : '任务结果、套餐到期等提醒都会出现在这里'">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--primary btn--sm" @click="markAll" :disabled="marking || !unread">
+    <icon name="check" :size="14"></icon> 全部标为已读
+  </button>
+</page-head>
+
+<!-- 公告 -->
+<div class="card">
+  <div class="card__head">
+    <div>
+      <div class="card__title">站点公告</div>
+      <div class="card__sub">管理员发布的重要信息</div>
+    </div>
+    <div class="card__actions">
+      <button class="btn btn--sm btn--ghost" @click="loadAnnouncements" :disabled="announcementsLoading">
+        <icon name="refresh" :size="13" :class="{ spin: announcementsLoading }"></icon>
+      </button>
+    </div>
+  </div>
+  <div class="card__body">
+    <div v-if="announcementsLoading"><loading text="正在加载公告…"></loading></div>
+    <alert type="error" :message="announcementsError" v-else-if="announcementsError"></alert>
+    <empty-state v-else-if="!announcements.length" icon="megaphone" title="暂无公告"
+                 hint="有新的通知或活动时，管理员会在这里发布。"></empty-state>
+    <div v-else>
+      <div class="kv-list">
+        <div class="kv-list__row" v-for="a in announcements" :key="a.id">
+          <div class="kv-list__v">
+            <div class="flex-gap">
+              <span class="row-title">{{ a.title }}</span>
+              <status-tag kind="announcement" :value="a.level" :dot="false"></status-tag>
+              <span class="tag tag--primary" v-if="a.is_pinned">置顶</span>
+              <span class="fs-12 text-muted">
+                <time-text :value="a.publish_at || a.created_at" mode="minute"></time-text>
+              </span>
+            </div>
+            <div class="mt-8" style="white-space:pre-wrap">{{ a.content }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 我的通知 -->
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">我的通知</div>
+    <div class="card__actions">
+      <span class="tag" :class="unread ? 'tag--danger' : 'tag--muted'">
+        {{ unread ? (unread + ' 条未读') : '全部已读' }}
+      </span>
+    </div>
+  </div>
+
+  <div class="card__body">
+    <div v-if="loading"><loading text="正在加载通知…"></loading></div>
+    <alert type="error" :message="error" v-else-if="error">
+      <span>{{ error }}</span>
+      <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+    </alert>
+    <empty-state v-else-if="!items.length" icon="bell" title="还没有通知"
+                 hint="任务执行完成、套餐到期前，系统会在这里提醒你。"></empty-state>
+
+    <template v-else>
+      <div v-for="row in items" :key="row.id" class="log-line"
+           :style="isUnread(row) ? 'border-left:3px solid var(--primary);padding-left:10px' : ''">
+        <div class="flex-1">
+          <div class="flex-gap">
+            <span :class="isUnread(row) ? 'row-title' : 'text-2'">{{ row.title }}</span>
+            <status-tag kind="level" :value="row.level" :dot="false"></status-tag>
+            <span class="tag tag--primary" v-if="isUnread(row)">未读</span>
+            <span class="fs-12 text-muted">
+              <time-text :value="row.created_at" mode="minute"></time-text>
+              （{{ agoText(row.created_at) }}）
+            </span>
+          </div>
+          <div class="mt-8" style="white-space:pre-wrap"
+               :class="isUnread(row) ? '' : 'text-2'">{{ row.content }}</div>
+        </div>
+        <div style="flex:0 0 auto">
+          <button class="btn btn--sm btn--ghost" v-if="isUnread(row)" @click="markOne(row)"
+                  :disabled="marking" title="标为已读">
+            <icon name="check" :size="13"></icon> 已读
+          </button>
+          <span v-else class="fs-12 text-muted">已读</span>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>

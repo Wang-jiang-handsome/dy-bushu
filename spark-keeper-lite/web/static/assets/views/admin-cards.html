@@ -1,0 +1,309 @@
+<page-head title="卡密管理" :sub="'共 ' + total + ' 张卡密　未使用 ' + ((stats && stats.unused) || 0) + ' 张'">
+  <button class="btn btn--sm" @click="load(); loadStats()" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--sm" @click="exportCards('')" :disabled="exporting">
+    <icon name="download" :size="14" :class="{ spin: exporting }"></icon> 导出当前筛选
+  </button>
+  <button class="btn btn--primary btn--sm" @click="openGen">
+    <icon name="plus" :size="14"></icon> 批量生成卡密
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+<alert type="warn" :message="statsError" v-if="statsError"></alert>
+
+<div class="grid grid--4 mb-16">
+  <stat-card label="卡密总数" icon="key" :value="(stats && stats.total) || 0"
+             :hint="'余额卡面额合计 ' + money((stats && stats.balance_amount_cents) || 0)"></stat-card>
+  <stat-card label="未使用" icon="check-circle" tone="success"
+             :value="(stats && stats.unused) || 0" hint="可继续发放"></stat-card>
+  <stat-card label="已使用" icon="tag" tone="info" :value="(stats && stats.used) || 0"
+             hint="已完成兑换"></stat-card>
+  <stat-card label="已停用 / 过期" icon="alert" tone="warn"
+             :value="((stats && stats.disabled) || 0) + ((stats && stats.expired) || 0)"
+             :hint="'停用 ' + ((stats && stats.disabled) || 0) + ' · 过期 ' + ((stats && stats.expired) || 0)"></stat-card>
+</div>
+
+<!-- 批次汇总 -->
+<div class="card">
+  <div class="card__head">
+    <div>
+      <div class="card__title">批次汇总</div>
+      <div class="card__sub">点批次号可筛选该批次的卡密，或整批导出</div>
+    </div>
+  </div>
+  <data-table :loading="loading && !stats" :error="''"
+              :empty="!((stats && stats.batches) || []).length" :colspan="7"
+              empty-title="还没有任何卡密批次"
+              empty-hint="点击右上角「批量生成卡密」创建第一个批次。">
+    <template #head>
+      <thead>
+        <tr>
+          <th>批次号</th><th>套餐</th><th>类型</th><th class="is-num">数量</th>
+          <th class="is-num">已用 / 停用</th><th>备注</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <tr v-for="b in ((stats && stats.batches) || [])" :key="b.batch_no">
+      <td class="is-mono">
+        {{ b.batch_no }}
+        <div class="row-sub"><time-text :value="b.created_at" mode="minute"></time-text></div>
+      </td>
+      <td>{{ b.package_name || '—' }}</td>
+      <td><status-tag kind="cardType" :value="b.card_type" :dot="false"></status-tag></td>
+      <td class="is-num">{{ b.quantity || 0 }}</td>
+      <td class="is-num">
+        <span class="text-success">{{ b.used_count || 0 }}</span> /
+        <span class="text-warn">{{ b.disabled_count || 0 }}</span>
+      </td>
+      <td><span class="ellipsis" :title="b.note">{{ b.note || '—' }}</span></td>
+      <td class="is-actions">
+        <button class="btn btn--sm btn--ghost" @click="filterByBatch(b.batch_no)" title="筛选该批次">
+          <icon name="filter" :size="13"></icon></button>
+        <button class="btn btn--sm" @click="exportCards(b.batch_no)" :disabled="exporting">
+          <icon name="download" :size="13"></icon> 导出</button>
+        <button class="btn btn--sm btn--ghost" @click="openBatch(b)" title="批次详情">
+          <icon name="eye" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+</div>
+
+<!-- 卡密列表 -->
+<div class="card">
+  <div class="card__head">
+    <div class="card__title">卡密列表</div>
+    <div class="card__actions">
+      <span class="tag tag--muted" v-if="filters.batch_no">批次：{{ filters.batch_no }}</span>
+    </div>
+  </div>
+  <div class="toolbar">
+    <div class="field toolbar__grow">
+      <label class="field__label">卡密 / 备注</label>
+      <input class="input" v-model="filters.keyword" placeholder="卡密或备注关键字" @keyup.enter="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">状态</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.status" @change="search">
+          <option v-for="o in statusOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">套餐</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.package_id" @change="search">
+          <option value="">全部套餐</option>
+          <option v-for="p in packages" :key="p.id" :value="p.id">{{ p.name }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">批次号</label>
+      <input class="input" v-model="filters.batch_no" placeholder="批次号" @keyup.enter="search"
+             style="width:150px" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="''" :empty="!items.length" :colspan="8"
+              empty-title="没有符合条件的卡密"
+              empty-hint="调整筛选条件，或先生成一批卡密。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>卡密</th><th>套餐 / 权益</th><th>类型</th><th>状态</th>
+          <th>使用情况</th><th>激活截止</th><th>创建时间</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td class="is-mono">
+        {{ row.code }}
+        <copy-button :text="row.code" icon-only></copy-button>
+        <div class="row-sub" v-if="row.batch_no">{{ row.batch_no }}</div>
+      </td>
+      <td>
+        {{ row.package_name || '—' }}
+        <div class="row-sub">
+          {{ row.benefit_text || ('可用 ' + (row.use_limit || 1) + ' 次') }}
+        </div>
+      </td>
+      <td>
+        <status-tag kind="cardType" :value="row.card_type" :dot="false"></status-tag>
+        <div class="row-sub" v-if="row.amount_cents"><money :cents="row.amount_cents"></money></div>
+      </td>
+      <td><status-tag kind="card" :value="row.status"></status-tag></td>
+      <td>
+        <span class="fs-12">已用 {{ row.used_count || 0 }} / {{ row.use_limit || 1 }}</span>
+        <div class="row-sub" v-if="row.used_by_username">
+          {{ row.used_by_username }}
+          <span v-if="row.used_at"> · <time-text :value="row.used_at" mode="minute"></time-text></span>
+        </div>
+        <div class="row-sub" v-else-if="row.bound_username">定向：{{ row.bound_username }}</div>
+      </td>
+      <td class="nowrap">
+        <span v-if="row.expire_at"><time-text :value="row.expire_at" mode="date"></time-text></span>
+        <span v-else class="text-muted">长期有效</span>
+      </td>
+      <td class="nowrap"><time-text :value="row.created_at" mode="minute"></time-text></td>
+      <td class="is-actions">
+        <button class="btn btn--sm" @click="toggle(row)" :disabled="acting === row.id"
+                :title="row.status === 'disabled' ? '启用' : '停用'">
+          <icon name="power" :size="13"></icon>
+          {{ row.status === 'disabled' ? '启用' : '停用' }}
+        </button>
+        <button class="btn btn--sm btn--ghost" @click="remove(row)" :disabled="acting === row.id"
+                :title="row.status === 'unused' ? '删除卡密' : '只有未使用的卡密可删除'">
+          <icon name="trash" :size="13"></icon>
+        </button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<!-- 批量生成 -->
+<modal v-model="showGen" title="批量生成卡密" size="lg"
+       sub="生成后请立即导出保存，卡密只在这里显示一次">
+  <alert type="error" :message="genError" v-if="genError"></alert>
+
+  <template v-if="!genResult">
+    <div class="form-grid">
+      <field label="关联套餐" required hint="余额卡可不选，直接填面额">
+        <span class="select-wrap">
+          <select class="select" v-model="gen.package_code">
+            <option value="">不关联（仅余额卡）</option>
+            <option v-for="p in activePackages" :key="p.code" :value="p.code">
+              {{ p.name }}（{{ p.days }} 天 / {{ money(p.price_cents) }}）
+            </option>
+          </select>
+        </span>
+      </field>
+      <field label="卡密类型" required>
+        <span class="select-wrap">
+          <select class="select" v-model="gen.card_type">
+            <option v-for="o in OPTIONS.card_type" :key="o.value" :value="o.value">{{ o.label }}</option>
+          </select>
+        </span>
+      </field>
+      <field label="有效天数" v-if="gen.card_type === 'time'" required hint="兑换后增加的天数">
+        <input class="input" type="number" min="1" v-model.number="gen.days" />
+      </field>
+      <field label="每天额外执行次数" v-if="gen.card_type === 'count'" required
+             hint="兑换后每天的可用执行次数增加这么多，有效期与套餐一致">
+        <input class="input" type="number" min="1" v-model.number="gen.use_limit" />
+      </field>
+      <field label="面额（元）" v-if="gen.card_type === 'balance'" required hint="充值到余额的金额">
+        <input class="input" v-model="gen.amount_yuan" placeholder="例如 10.00" />
+      </field>
+      <field label="生成数量" required hint="单批最多 5000 张">
+        <input class="input" type="number" min="1" max="5000" v-model.number="gen.count" />
+      </field>
+      <field label="卡密前缀" hint="选填，会自动加在每张卡密前面">
+        <input class="input is-mono" v-model="gen.prefix" placeholder="例如 SPK" />
+      </field>
+      <field label="指定批次号" hint="选填，留空自动生成（推荐）">
+        <input class="input is-mono" v-model="gen.batch_no" placeholder="留空自动生成" />
+      </field>
+      <field label="备注" :span="2" hint="写清用途，便于日后对账">
+        <input class="input" v-model="gen.note" placeholder="例如：8 月活动批次" maxlength="120" />
+      </field>
+    </div>
+    <div class="alert alert--info mt-12 mb-0">
+      <icon name="info" :size="15" style="margin-top:2px"></icon>
+      <div class="alert__body">本次将生成：{{ genPreview }}</div>
+    </div>
+  </template>
+
+  <template v-else>
+    <div class="alert alert--success">
+      <icon name="check-circle" :size="16" style="margin-top:2px"></icon>
+      <div class="alert__body">
+        已生成 <b>{{ genResult.count }}</b> 张卡密，批次号
+        <b class="is-mono">{{ genResult.batch_no }}</b>
+        <copy-button :text="genResult.batch_no" label="复制批次号"></copy-button>
+      </div>
+    </div>
+    <div class="desc">
+      <div class="desc__k">套餐</div>
+      <div class="desc__v">{{ genResult.package_name || '—' }}</div>
+      <div class="desc__k">类型</div>
+      <div class="desc__v">
+        <status-tag kind="cardType" :value="genResult.card_type"></status-tag>
+        {{ genResult.benefit_text || '' }}
+      </div>
+      <div class="desc__k">激活截止</div>
+      <div class="desc__v">
+        <span v-if="genResult.expire_at"><time-text :value="genResult.expire_at" mode="time"></time-text></span>
+        <span v-else class="text-muted">长期有效</span>
+      </div>
+    </div>
+    <div class="section-title mt-16">卡密清单（前 50 张）</div>
+    <pre class="code-block">{{ (genResult.codes || []).slice(0, 50).join('\n') }}{{ (genResult.codes || []).length > 50 ? '\n…（共 ' + genResult.codes.length + ' 张，请用导出获取全部）' : '' }}</pre>
+  </template>
+
+  <template #foot>
+    <button class="btn" @click="showGen = false" :disabled="generating">关闭</button>
+    <template v-if="genResult">
+      <button class="btn" @click="copyAllCodes">
+        <icon name="copy" :size="14"></icon> 查看全部卡密</button>
+      <button class="btn btn--primary" @click="exportCards(genResult.batch_no)" :disabled="exporting">
+        <icon name="download" :size="14"></icon> 导出 CSV
+      </button>
+    </template>
+    <button class="btn btn--primary" v-else @click="generate" :disabled="generating"
+            :class="{ 'is-loading': generating }">
+      <icon name="refresh" :size="14" class="spin" v-if="generating"></icon>
+      <icon name="key" :size="14" v-else></icon> 确认生成
+    </button>
+  </template>
+</modal>
+
+<!-- 全部卡密文本 -->
+<modal v-model="showCodes" title="本批次全部卡密" size="lg" sub="可直接复制到记事本保存">
+  <pre class="code-block" style="max-height:52vh">{{ codeText }}</pre>
+  <template #foot>
+    <button class="btn" @click="showCodes = false">关闭</button>
+    <copy-button :text="codeText" label="复制全部"></copy-button>
+  </template>
+</modal>
+
+<!-- 批次详情 -->
+<modal v-model="showBatch" title="批次详情" v-if="batchDetail">
+  <div class="desc desc--wide">
+    <div class="desc__k">批次号</div>
+    <div class="desc__v is-mono">{{ batchDetail.batch_no }}</div>
+    <div class="desc__k">套餐</div><div class="desc__v">{{ batchDetail.package_name || '—' }}</div>
+    <div class="desc__k">类型</div>
+    <div class="desc__v"><status-tag kind="cardType" :value="batchDetail.card_type"></status-tag></div>
+    <div class="desc__k">数量</div><div class="desc__v">{{ batchDetail.quantity || 0 }} 张</div>
+    <div class="desc__k">已使用</div><div class="desc__v">{{ batchDetail.used_count || 0 }} 张</div>
+    <div class="desc__k">已停用</div><div class="desc__v">{{ batchDetail.disabled_count || 0 }} 张</div>
+    <div class="desc__k">面额</div>
+    <div class="desc__v">
+      <span v-if="batchDetail.amount_cents"><money :cents="batchDetail.amount_cents"></money></span>
+      <span v-else class="text-muted">—</span>
+    </div>
+    <div class="desc__k">备注</div><div class="desc__v">{{ batchDetail.note || '—' }}</div>
+    <div class="desc__k">创建时间</div>
+    <div class="desc__v"><time-text :value="batchDetail.created_at" mode="time"></time-text></div>
+  </div>
+  <template #foot>
+    <button class="btn" @click="showBatch = false">关闭</button>
+    <button class="btn btn--primary" @click="filterByBatch(batchDetail.batch_no); showBatch = false">
+      查看该批次卡密
+    </button>
+  </template>
+</modal>

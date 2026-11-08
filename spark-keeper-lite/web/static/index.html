@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#3b6df5" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="description" content="抖音自动续火花系统：多账号托管、定时任务、执行记录与卡密发卡。" />
+  <title>抖音续火花系统</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/assets/style.css" />
+  <script>
+    /* 前端可依赖的全局（契约 §9）。这里是静态兜底值：
+       启动后 app.js 会请求 /api/v1/auth/public-configs 覆盖站名/注册开关/支付开关。 */
+    window.__SPARK__ = {
+      version: '1.0.0',
+      apiBase: '/api/v1',
+      siteName: '抖音续火花系统',
+      allowRegister: true,
+      onlinePayEnabled: false
+    };
+  </script>
+  <script src="/vendor/vue.global.prod.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div id="boot">
+      <div class="boot-logo">火</div>
+      <div>正在加载前端资源…</div>
+      <div style="font-size:12px;color:var(--text-3)">
+        若长时间停留在此页，请确认 <code>/assets/app.js</code> 与 <code>/vendor/vue.global.prod.js</code> 可访问。
+      </div>
+    </div>
+  </div>
+
+  <noscript>
+    <div style="padding:32px;font-family:sans-serif">
+      <h2>需要启用 JavaScript</h2>
+      <p>本站是单页应用，请在浏览器设置中启用 JavaScript 后重试。</p>
+    </div>
+  </noscript>
+
+  <!-- 框架层：api / store / router / 组件 / boot -->
+  <script src="/assets/app.js"></script>
+  <!-- 页面层：每个文件注册若干页面组件（模板片段在 /assets/views/*.html） -->
+  <script src="/assets/views-auth.js"></script>
+  <script src="/assets/views-dashboard.js"></script>
+  <script src="/assets/views-accounts.js"></script>
+  <script src="/assets/views-tasks.js"></script>
+  <script src="/assets/views-user-ops.js"></script>
+  <script src="/assets/views-billing.js"></script>
+  <script src="/assets/views-misc.js"></script>
+  <script src="/assets/views-admin-core.js"></script>
+  <script src="/assets/views-admin-money.js"></script>
+  <script src="/assets/views-admin-ops.js"></script>
+  <script src="/assets/views-admin-system.js"></script>
+  <script>
+    if (window.Spark && typeof window.Spark.boot === 'function') {
+      window.Spark.boot();
+    } else if (window.Vue) {
+      document.getElementById('app').innerHTML =
+        '<div style="padding:40px;text-align:center;font-family:sans-serif">' +
+        '<h2>前端框架未加载</h2><p>请确认 <code>/assets/app.js</code> 可访问。</p></div>';
+    }
+  </script>
+</body>
+</html>

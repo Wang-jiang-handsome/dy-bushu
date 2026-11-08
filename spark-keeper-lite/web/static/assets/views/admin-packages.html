@@ -1,0 +1,148 @@
+<page-head title="套餐管理" :sub="'共 ' + items.length + ' 个套餐　下架后用户端不再展示，但已有订单不受影响'">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--primary btn--sm" @click="openCreate">
+    <icon name="plus" :size="14"></icon> 新建套餐
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div class="card">
+  <div class="card__head">
+    <div>
+      <div class="card__title">套餐列表</div>
+      <div class="card__sub">价格、账号数上限、每日执行次数都会直接影响用户端展示与权限校验</div>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="''" :empty="!items.length" :colspan="8"
+              empty-title="还没有套餐"
+              empty-hint="创建一个套餐后，用户端「套餐购买」页才会显示。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>套餐</th><th>标识</th><th class="is-num">价格</th><th class="is-num">天数</th>
+          <th class="is-num">账号上限</th><th class="is-num">每日次数</th><th>状态</th>
+          <th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <template #empty-action>
+      <button class="btn btn--primary btn--sm" @click="openCreate">
+        <icon name="plus" :size="13"></icon> 新建套餐
+      </button>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td>
+        <div class="row-title">{{ row.name }}</div>
+        <div class="row-sub">{{ row.description || '—' }}</div>
+        <div class="fs-12 text-muted mt-8" v-if="(row.features || []).length">
+          {{ (row.features || []).slice(0, 3).join(' / ') }}{{ (row.features || []).length > 3 ? ' …' : '' }}
+        </div>
+      </td>
+      <td class="is-mono">{{ row.code }}</td>
+      <td class="is-num">
+        <money :cents="row.price_cents" strong></money>
+        <div class="row-sub" v-if="row.original_cents && row.original_cents > row.price_cents">
+          原价 <money :cents="row.original_cents"></money>
+        </div>
+      </td>
+      <td class="is-num">{{ row.days }} 天</td>
+      <td class="is-num">{{ row.account_limit }}</td>
+      <td class="is-num">{{ row.daily_task_limit }}</td>
+      <td>
+        <span class="tag" :class="row.is_active ? 'tag--success' : 'tag--muted'">
+          {{ row.is_active ? '已上架' : '已下架' }}</span>
+      </td>
+      <td class="is-actions">
+        <button class="btn btn--sm btn--soft" @click="openEdit(row)">
+          <icon name="edit" :size="13"></icon> 编辑</button>
+        <button class="btn btn--sm btn--ghost" @click="toggleActive(row)" :disabled="acting === row.id"
+                :title="row.is_active ? '下架' : '上架'">
+          <icon name="power" :size="13"></icon></button>
+        <button class="btn btn--sm btn--ghost" @click="remove(row)" :disabled="acting === row.id" title="删除">
+          <icon name="trash" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+</div>
+
+<div class="card">
+  <div class="card__head"><div class="card__title">套餐配置建议</div></div>
+  <div class="card__body fs-13 text-2">
+    <p>· <b>账号上限</b>决定用户能绑定几个抖音账号，超出会返回 <code>account_limit</code> 错误。</p>
+    <p>· <b>每日次数</b>是「每个账号每天自动执行的次数上限」，手动执行同样计入。</p>
+    <p>· 体验卡建议把价格设为 0，用户点购买时会直接生成 0 元订单并用卡密流程开通。</p>
+    <p class="mb-0">· 删除已被订单引用的套餐时，系统会自动改为「下架」而不是物理删除，避免订单失去关联。</p>
+  </div>
+</div>
+
+<!-- 新建 / 编辑 -->
+<modal v-model="showForm" size="lg" :title="editing ? ('编辑套餐：' + editing.name) : '新建套餐'">
+  <alert type="error" :message="formError" v-if="formError"></alert>
+
+  <div v-if="!editing" class="flex-gap mb-12">
+    <span class="fs-13 text-2">快速模板：</span>
+    <button class="btn btn--sm" @click="useTemplate('trial')">体验卡</button>
+    <button class="btn btn--sm" @click="useTemplate('monthly')">月卡</button>
+    <button class="btn btn--sm" @click="useTemplate('quarter')">季卡</button>
+    <button class="btn btn--sm" @click="useTemplate('yearly')">年卡</button>
+  </div>
+
+  <div class="form-grid">
+    <field label="套餐标识" required hint="小写字母/数字/下划线，创建后不建议修改（卡密按标识关联）">
+      <input class="input is-mono" v-model="form.code" :disabled="!!editing" placeholder="monthly" />
+    </field>
+    <field label="套餐名称" required>
+      <input class="input" v-model="form.name" placeholder="例如：月卡" maxlength="30" />
+    </field>
+    <field label="售价（元）" required hint="填 0 表示免费（体验卡）">
+      <input class="input" v-model="form.price_yuan" placeholder="19.00" />
+    </field>
+    <field label="原价（元）" hint="选填，仅用于展示划线价">
+      <input class="input" v-model="form.original_yuan" placeholder="29.00" />
+    </field>
+    <field label="有效天数" required>
+      <input class="input" type="number" min="1" v-model.number="form.days" />
+    </field>
+    <field label="排序权重" hint="数字越小越靠前">
+      <input class="input" type="number" v-model.number="form.sort_order" />
+    </field>
+    <field label="可绑定账号数" required hint="超出后用户新增账号会被拒绝">
+      <input class="input" type="number" min="1" v-model.number="form.account_limit" />
+    </field>
+    <field label="每账号每日执行次数" required>
+      <input class="input" type="number" min="1" v-model.number="form.daily_task_limit" />
+    </field>
+    <field label="套餐描述" :span="2">
+      <input class="input" v-model="form.description" placeholder="一句话说明，展示在套餐卡片上"
+             maxlength="120" />
+    </field>
+    <field label="权益列表" :span="2" hint="每行一条，展示在套餐卡片里">
+      <textarea class="textarea" rows="5" v-model="form.features_text"
+                placeholder="2 个抖音账号&#10;每天 3 次自动续火花&#10;完整执行记录与截图"></textarea>
+    </field>
+    <field label="上架状态" :span="2">
+      <label class="switch">
+        <input type="checkbox" v-model="form.is_active" />
+        <span class="switch__track"></span>
+        <span>{{ form.is_active ? '已上架（用户可见可购买）' : '已下架（用户端不展示）' }}</span>
+      </label>
+    </field>
+  </div>
+
+  <template #foot>
+    <button class="btn" @click="showForm = false" :disabled="submitting">取消</button>
+    <button class="btn btn--primary" @click="save" :disabled="submitting"
+            :class="{ 'is-loading': submitting }">
+      <icon name="refresh" :size="14" class="spin" v-if="submitting"></icon>
+      {{ editing ? '保存修改' : '创建套餐' }}
+    </button>
+  </template>
+</modal>

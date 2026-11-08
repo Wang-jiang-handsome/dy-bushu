@@ -1,0 +1,182 @@
+<page-head title="我的订单"
+           sub="查看历史订单与支付状态。待支付的订单可以继续支付、查单或取消。">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <a class="btn btn--primary btn--sm" href="#/packages">
+    <icon name="box" :size="14"></icon> 去购买套餐
+  </a>
+</page-head>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field">
+      <label class="field__label">状态</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.status" @change="search">
+          <option v-for="o in statusOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">支付渠道</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.channel" @change="search">
+          <option v-for="o in channelOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field toolbar__grow">
+      <label class="field__label">关键字</label>
+      <input class="input" v-model="filters.keyword" placeholder="订单号 / 套餐名"
+             @keyup.enter="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">开始日期</label>
+      <input class="input" type="date" v-model="filters.start_date" @change="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">结束日期</label>
+      <input class="input" type="date" v-model="filters.end_date" @change="search" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="error" :empty="!items.length" :colspan="8"
+              empty-title="还没有订单"
+              empty-hint="购买套餐或充值后，订单会出现在这里。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>订单号</th><th>套餐 / 主题</th><th class="is-num">金额</th><th>支付渠道</th>
+          <th>状态</th><th>创建时间</th><th>支付时间</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <template #empty-action>
+      <a class="btn btn--primary btn--sm" href="#/packages">去购买套餐</a>
+    </template>
+    <tr v-for="row in items" :key="row.order_no">
+      <td class="is-mono">
+        {{ row.order_no }}
+        <copy-button :text="row.order_no" icon-only></copy-button>
+      </td>
+      <td><span class="ellipsis" :title="row.subject">{{ row.subject || '—' }}</span>
+        <div class="row-sub" v-if="row.package_name">{{ row.package_name }}</div>
+      </td>
+      <td class="is-num"><money :cents="amountOf(row)" strong></money></td>
+      <td>
+        <status-tag kind="channel" :value="row.channel" :dot="false"
+                    :text="row.channel_name || ''"></status-tag>
+      </td>
+      <td>
+        <status-tag kind="order" :value="row.status"></status-tag>
+        <div class="row-sub" v-if="row.remark">{{ row.remark }}</div>
+      </td>
+      <td class="nowrap"><time-text :value="row.created_at" mode="minute"></time-text></td>
+      <td class="nowrap">
+        <span v-if="row.paid_at"><time-text :value="row.paid_at" mode="minute"></time-text></span>
+        <span v-else class="text-muted">—</span>
+      </td>
+      <td class="is-actions">
+        <button class="btn btn--sm btn--soft" @click="openDetail(row)">
+          <icon name="eye" :size="13"></icon> 详情</button>
+        <button class="btn btn--sm btn--ghost" v-if="row.can_cancel === undefined ? row.status === 'pending' : row.can_cancel"
+                @click="cancel(row)" :disabled="acting" title="取消订单">
+          <icon name="x" :size="13"></icon>
+        </button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<!-- 订单详情 -->
+<drawer v-model="showDetail" title="订单详情"
+        :sub="detail ? (detail.order_no || '') : ''" @close="closeDetail">
+  <div v-if="detailLoading"><loading text="正在加载订单…"></loading></div>
+  <alert type="error" :message="detailError" v-if="detailError"></alert>
+
+  <template v-if="detail && !detailLoading">
+    <div class="flex-between mb-12">
+      <status-tag kind="order" :value="detail.status"></status-tag>
+      <div class="btn-row">
+        <button class="btn btn--sm" v-if="detail.status === 'pending'" @click="query" :disabled="acting">
+          <icon name="refresh" :size="13" :class="{ spin: acting }"></icon> 查单
+        </button>
+        <button class="btn btn--sm btn--danger" v-if="detail.status === 'pending'" @click="cancel(detail)"
+                :disabled="acting">
+          <icon name="x" :size="13"></icon> 取消订单
+        </button>
+      </div>
+    </div>
+
+    <div class="desc desc--wide">
+      <div class="desc__k">订单号</div>
+      <div class="desc__v">
+        <span class="is-mono">{{ detail.order_no }}</span>
+        <copy-button :text="detail.order_no" label="复制"></copy-button>
+      </div>
+      <div class="desc__k">套餐 / 主题</div>
+      <div class="desc__v">{{ detail.subject || '—' }}</div>
+      <div class="desc__k">订单金额</div>
+      <div class="desc__v"><money :cents="detail.amount_cents"></money></div>
+      <div class="desc__k">应付金额</div>
+      <div class="desc__v"><money :cents="detail.payable_cents"></money></div>
+      <div class="desc__k">支付渠道</div>
+      <div class="desc__v">
+        <status-tag kind="channel" :value="detail.channel" :text="detail.channel_name || ''"></status-tag>
+      </div>
+      <div class="desc__k">第三方交易号</div>
+      <div class="desc__v is-mono">{{ detail.trade_no || '—' }}</div>
+      <div class="desc__k">创建时间</div>
+      <div class="desc__v"><time-text :value="detail.created_at" mode="time"></time-text></div>
+      <div class="desc__k">支付时间</div>
+      <div class="desc__v">
+        <span v-if="detail.paid_at"><time-text :value="detail.paid_at" mode="time"></time-text></span>
+        <span v-else class="text-muted">—</span>
+      </div>
+      <div class="desc__k">过期时间</div>
+      <div class="desc__v">
+        <span v-if="detail.expire_at"><time-text :value="detail.expire_at" mode="time"></time-text></span>
+        <span v-else class="text-muted">—</span>
+      </div>
+      <div class="desc__k">备注</div>
+      <div class="desc__v">{{ detail.remark || '—' }}</div>
+    </div>
+
+    <!-- 待支付：展示二维码与收银台 -->
+    <template v-if="detail.status === 'pending'">
+      <div class="section-title mt-16">继续支付</div>
+      <div class="alert alert--info" v-if="detail.channel === 'card'">
+        <icon name="key" :size="15" style="margin-top:2px"></icon>
+        <div class="alert__body">
+          该订单使用卡密支付，请到 <a href="#/card" @click="closeDetail">卡密兑换</a> 页输入卡密完成开通。
+        </div>
+      </div>
+      <template v-else>
+        <div class="qr-box" v-if="detailQr"><img :src="detailQr" alt="支付二维码" /></div>
+        <div class="copy-row mt-8" v-if="detailQrText">
+          <span class="fs-13 text-2">支付链接</span>
+          <code>{{ detailQrText }}</code>
+          <copy-button :text="detailQrText"></copy-button>
+        </div>
+        <a class="btn btn--primary btn--block mt-12" v-if="detail.pay_url"
+           :href="detail.pay_url" target="_blank" rel="noopener">
+          <icon name="external" :size="14"></icon> 打开收银台
+        </a>
+        <div class="fs-12 text-muted mt-8">本页每 3 秒自动查询一次支付结果，支付成功后会自动刷新。</div>
+      </template>
+    </template>
+  </template>
+
+  <template #foot>
+    <button class="btn" @click="closeDetail">关闭</button>
+  </template>
+</drawer>

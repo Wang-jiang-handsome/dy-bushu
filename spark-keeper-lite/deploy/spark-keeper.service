@@ -1,0 +1,79 @@
+[Unit]
+# =============================================================================
+#  spark-keeper · systemd 单元（宝塔 / 原生 Linux 部署用；Docker 部署不需要它）
+#
+#  安装（宝塔面板自带 systemd，SSH 终端里执行）：
+#     cp /www/wwwroot/spark-keeper/deploy/spark-keeper.service /etc/systemd/system/
+#     systemctl daemon-reload
+#     systemctl enable --now spark-keeper
+#     systemctl status spark-keeper --no-pager -l
+#     journalctl -u spark-keeper -f          # 看日志（Ctrl+C 退出）
+#
+#  为什么不推荐用宝塔「Python 项目管理器」：它会自己接管虚拟环境与日志，
+#  而本项目**零第三方依赖**（纯标准库），用 systemd 反而更简单、日志更好查。
+# =============================================================================
+Description=SparkKeeper (Douyin spark keeper: web + scheduler + Chromium)
+Documentation=file:///www/wwwroot/spark-keeper/deploy/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# --- 运行用户 -------------------------------------------------------------
+# 宝塔默认站点用户是 www。用 www 跑更安全（不给 root），但 data/ 目录必须
+# 属于它：chown -R www:www /www/wwwroot/spark-keeper/data
+# 如果不用宝塔，改成你自己的普通用户。
+User=www
+Group=www
+
+# --- 工作目录 / 环境变量 ---------------------------------------------------
+# 路径按你的实际部署目录调整；宝塔习惯放在 /www/wwwroot/<站点名>/
+WorkingDirectory=/www/wwwroot/spark-keeper
+Environment=SK_ENV=prod
+Environment=SK_PROJECT_DIR=/www/wwwroot/spark-keeper
+Environment=SK_DATA_DIR=/www/wwwroot/spark-keeper/data
+# 只监听本机，由 Nginx 反代对外（宝塔站点 -> 反向代理 -> 127.0.0.1:8000）
+Environment=SK_HOST=127.0.0.1
+Environment=SK_PORT=8000
+Environment=TZ=Asia/Shanghai
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONUTF8=1
+# 2G 内存只能跑 1 个浏览器；4G 可以设 2
+Environment=SK_MAX_CONCURRENT_BROWSERS=1
+# 老内核（CentOS 7）没有 user namespace，Chromium 沙箱起不来：
+#   No usable sandbox! ... 只能关掉。想强制开就改成 auto/0。
+Environment=SK_CHROME_NO_SANDBOX=1
+# Chromium 需要**可写的 HOME** 放临时配置；www 用户的 HOME 常常不可写，
+# 浏览器会莫名启动失败。指到 data/ 下最稳。
+Environment=HOME=/www/wwwroot/spark-keeper/data
+# 容器外的 Chromium 路径（Ubuntu/Debian: /usr/bin/chromium 或 chromium-browser）
+# 不设也能自动探测，写死更省事：
+# Environment=SK_CHROME_PATH=/usr/bin/chromium
+
+# 有 .env 就加载（Docker 部署的变量也可复用；文件不存在会被忽略）
+EnvironmentFile=-/www/wwwroot/spark-keeper/.env
+
+# 迁移数据库 + 首次自动创建管理员（幂等，重复执行安全）
+ExecStartPre=/usr/bin/python3 /www/wwwroot/spark-keeper/main.py init
+
+ExecStart=/usr/bin/python3 /www/wwwroot/spark-keeper/main.py serve --host 127.0.0.1 --port 8000
+
+# --- 守护 ------------------------------------------------------------------
+Restart=always
+RestartSec=5
+# 浏览器 + CDP 连接多，文件句柄给足
+LimitNOFILE=65535
+
+# 让 Chromium 有足够的共享内存（不足会随机崩溃）
+PrivateTmp=false
+
+# 只允许写数据目录（systemd 的沙箱，可选但推荐）
+ReadWritePaths=/www/wwwroot/spark-keeper/data
+
+# 退出信号：给正在发送的任务一点收尾时间
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

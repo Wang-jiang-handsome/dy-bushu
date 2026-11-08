@@ -1,0 +1,93 @@
+# =============================================================================
+#  spark-keeper-lite · 单机 Docker 部署（不含在线支付，纯卡密）
+#
+#  与 pro 版的唯一区别：镜像里没有 app/payment/ 目录，因此
+#      /api/v1/pay/notify/<channel>、/api/v1/pay/return 不存在（404 属正常）
+#  其余（安装向导、卡密发卡、兑换、备份、健康检查）完全一致。
+#
+#  用法：
+#      cp .env.example .env
+#      docker compose up -d --build
+# =============================================================================
+name: spark-keeper-lite
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      args:
+        # 国内构建时用：SK_APT_MIRROR=mirrors.aliyun.com docker compose build
+        APT_MIRROR: "${SK_APT_MIRROR:-}"
+    image: spark-keeper-lite:${SK_VERSION:-1.0.0}
+    container_name: spark-keeper-lite-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SK_ENV: "prod"
+      SK_HOST: "0.0.0.0"
+      SK_PORT: "8000"
+      SK_DATA_DIR: "/app/data"
+      TZ: "${TZ:-Asia/Shanghai}"
+      SK_DEMO_MODE: "0"
+      # 容器里 Chromium 沙箱不可用，必须关（宿主机老内核时尤其明显）
+      SK_CHROME_NO_SANDBOX: "1"
+      # 弱机器优化：小机器上可调大页面超时 / 关掉低配模式
+      SK_CHROME_LOW_RESOURCE: "${SK_CHROME_LOW_RESOURCE:-1}"
+      SK_CDP_PAGE_TIMEOUT: "${SK_CDP_PAGE_TIMEOUT:-45}"
+      # lite 版镜像里没有 app/payment/，支付路由整体不存在（404 属正常）；
+      # 站点配置 pay.enabled 默认就是 0，后台也点不亮在线支付。
+      SK_SCHEDULER_ENABLED: "${SK_SCHEDULER_ENABLED:-1}"
+    ports:
+      - "${SK_BIND:-127.0.0.1}:${SK_HTTP_PORT:-8000}:8000"
+    volumes:
+      - spark-data:/app/data
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  worker:
+    profiles: ["worker"]
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      args:
+        APT_MIRROR: "${SK_APT_MIRROR:-}"
+    image: spark-keeper-lite:${SK_VERSION:-1.0.0}
+    container_name: spark-keeper-lite-worker
+    restart: unless-stopped
+    command: ["python", "main.py", "worker"]
+    env_file:
+      - .env
+    environment:
+      SK_ENV: "prod"
+      SK_DATA_DIR: "/app/data"
+      SK_WORKER_ID: "scheduler-1"
+      TZ: "${TZ:-Asia/Shanghai}"
+    volumes:
+      - spark-data:/app/data
+    shm_size: "1gb"
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  spark-data:
+    driver: local

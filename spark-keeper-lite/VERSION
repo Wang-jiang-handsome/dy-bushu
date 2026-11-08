@@ -1,0 +1,6 @@
+# 交付版本信息（由 tools/assemble_delivery.py 生成）
+PRODUCT=抖音续火花系统
+PRODUCT_EN=SparkKeeper
+EDITION=lite
+VERSION=1.0.0
+BUILD=20260816

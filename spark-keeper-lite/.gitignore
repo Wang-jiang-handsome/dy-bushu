@@ -1,0 +1,27 @@
+# runtime artifacts (never commit)
+data/*
+!data/sessions/.gitkeep
+!data/screenshots/.gitkeep
+!data/uploads/.gitkeep
+*.db
+*.db-wal
+*.db-shm
+secret.key
+INITIAL_ADMIN.txt
+backups/
+
+# local secrets
+.env
+.env.local
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# editor / os
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

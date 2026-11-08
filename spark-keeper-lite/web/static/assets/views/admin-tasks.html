@@ -1,0 +1,126 @@
+<page-head title="任务总览" :sub="'共 ' + total + ' 个定时任务　勾选后可批量启停或删除'">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field toolbar__grow">
+      <label class="field__label">关键字</label>
+      <input class="input" v-model="filters.keyword" placeholder="任务名 / 账号 / 用户名" @keyup.enter="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">状态</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.enabled" @change="search">
+          <option v-for="o in enabledOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">用户 ID</label>
+      <input class="input" v-model="filters.user_id" placeholder="按用户筛选" @keyup.enter="search"
+             style="width:120px" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <div class="card__foot" style="border-top:0;border-bottom:1px solid var(--border)">
+    <div class="flex-between">
+      <span class="fs-13 text-2">已选中 <b>{{ selected.length }}</b> 个任务</span>
+      <div class="btn-row">
+        <button class="btn btn--sm" @click="batch('enable')" :disabled="!selected.length || batchRunning">
+          <icon name="power" :size="13"></icon> 批量启用</button>
+        <button class="btn btn--sm" @click="batch('disable')" :disabled="!selected.length || batchRunning">
+          <icon name="x-circle" :size="13"></icon> 批量停用</button>
+        <button class="btn btn--sm btn--danger" @click="batch('delete')" :disabled="!selected.length || batchRunning">
+          <icon name="trash" :size="13"></icon> 批量删除</button>
+      </div>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="''" :empty="!items.length" :colspan="9"
+              empty-title="没有符合条件的任务" @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th style="width:36px">
+            <input type="checkbox" :checked="allSelected" @change="toggleAll" title="全选本页" />
+          </th>
+          <th>任务</th><th>归属用户</th><th>托管账号</th><th>执行计划</th>
+          <th>状态</th><th>最近执行</th><th>下次执行</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td><input type="checkbox" :checked="has(row.id)" @change="toggleOne(row.id)" /></td>
+      <td>
+        <div class="row-title">{{ row.name || ('任务 #' + row.id) }}</div>
+        <div class="row-sub is-mono">#{{ row.id }}</div>
+      </td>
+      <td>
+        <span v-if="row.username">{{ row.username }}</span>
+        <span v-else class="text-muted">—</span>
+      </td>
+      <td>
+        {{ row.account_nickname || ('账号 #' + row.account_id) }}
+        <div class="row-sub" v-if="row.account_status">
+          <status-tag kind="account" :value="row.account_status" :dot="false"></status-tag>
+        </div>
+      </td>
+      <td>
+        <span class="is-mono">{{ row.time_of_day || '—' }}</span>
+        <span class="text-muted"> · {{ repeatText(row) }}</span>
+        <div class="row-sub">
+          <status-tag kind="friendMode" :value="row.friend_mode" :dot="false"></status-tag>
+          <span v-if="row.friend_count !== undefined"> {{ row.friend_count }} 位好友</span>
+        </div>
+      </td>
+      <td>
+        <span class="tag" :class="row.enabled ? 'tag--success' : 'tag--muted'">
+          {{ row.enabled ? '已启用' : '已停用' }}</span>
+      </td>
+      <td>
+        <span v-if="row.last_run_at">
+          <status-tag kind="run" :value="row.last_status || 'empty'"></status-tag>
+          <div class="row-sub"><time-text :value="row.last_run_at" mode="ago"></time-text></div>
+        </span>
+        <span v-else class="text-muted">尚未执行</span>
+      </td>
+      <td>
+        <span v-if="row.enabled && row.next_run_at">
+          <time-text :value="row.next_run_at" mode="minute"></time-text>
+        </span>
+        <span v-else class="text-muted">—</span>
+      </td>
+      <td class="is-actions">
+        <button class="btn btn--sm" @click="runNow(row)" :disabled="acting === row.id" title="管理员代跑一次">
+          <icon name="play" :size="13"></icon> 执行</button>
+        <button class="btn btn--sm btn--ghost" @click="toggle(row)" :disabled="acting === row.id"
+                :title="row.enabled ? '停用' : '启用'">
+          <icon name="power" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<div class="card">
+  <div class="card__head"><div class="card__title">风险提示</div></div>
+  <div class="card__body fs-13 text-2">
+    <p>· 「管理员代跑」会立刻真实发送消息并占用当日次数，请确认账号登录态正常后再操作。</p>
+    <p>· 批量删除不可恢复；如需保留配置，建议先「批量停用」。</p>
+    <p class="mb-0">· 账号登录态失效时任务会自动跳过并记录失败原因，可在「执行记录」查看。</p>
+  </div>
+</div>

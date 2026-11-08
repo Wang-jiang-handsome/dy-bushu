@@ -1,0 +1,127 @@
+<page-head title="卡密兑换"
+           sub="输入卡密即可开通 / 续期套餐或充值余额，兑换后立即生效。">
+  <a class="btn btn--sm" href="#/packages"><icon name="box" :size="14"></icon> 查看套餐</a>
+</page-head>
+
+<div class="grid grid--sidebar">
+  <div>
+    <div class="card">
+      <div class="card__head">
+        <div>
+          <div class="card__title">兑换卡密</div>
+          <div class="card__sub">卡密不区分大小写，中间的横线可以省略</div>
+        </div>
+      </div>
+      <div class="card__body">
+        <alert type="error" :message="redeemError" v-if="redeemError"></alert>
+        <div class="form-grid form-grid--1">
+          <field label="卡密" required hint="例如 ABCD-EFGH-IJKL-MNOP">
+            <input class="input is-mono" v-model="code" @input="onCodeInput"
+                   placeholder="请输入卡密" autocomplete="off" spellcheck="false"
+                   @keyup.enter="redeem" />
+          </field>
+        </div>
+        <button class="btn btn--primary btn--lg btn--block mt-12" @click="redeem"
+                :disabled="redeeming" :class="{ 'is-loading': redeeming }">
+          <icon name="refresh" :size="15" class="spin" v-if="redeeming"></icon>
+          <icon name="key" :size="15" v-else></icon>
+          {{ redeeming ? '兑换中…' : '立即兑换' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 兑换结果 -->
+    <div class="card" v-if="result">
+      <div class="card__head">
+        <div class="card__title">兑换结果</div>
+        <div class="card__actions">
+          <status-tag kind="redemption" :value="result.kind"></status-tag>
+        </div>
+      </div>
+      <div class="card__body">
+        <div class="alert alert--success">
+          <icon name="check-circle" :size="16" style="margin-top:2px"></icon>
+          <div class="alert__body">{{ result.message || '兑换成功' }}</div>
+        </div>
+        <div class="desc desc--wide">
+          <div class="desc__k">兑换类型</div>
+          <div class="desc__v">{{ statusText('redemption', result.kind) }}</div>
+          <div class="desc__k">套餐</div>
+          <div class="desc__v">{{ result.package_name || '—' }}</div>
+          <div class="desc__k" v-if="result.days_added">增加天数</div>
+          <div class="desc__v" v-if="result.days_added">{{ result.days_added }} 天</div>
+          <div class="desc__k" v-if="result.amount_cents">到账金额</div>
+          <div class="desc__v" v-if="result.amount_cents"><money :cents="result.amount_cents"></money></div>
+          <div class="desc__k" v-if="result.expire_before">原到期时间</div>
+          <div class="desc__v" v-if="result.expire_before">
+            <time-text :value="result.expire_before" mode="time"></time-text>
+          </div>
+          <div class="desc__k" v-if="result.expire_after">新到期时间</div>
+          <div class="desc__v" v-if="result.expire_after">
+            <b><time-text :value="result.expire_after" mode="time"></time-text></b>
+          </div>
+        </div>
+        <div class="btn-row mt-12">
+          <a class="btn btn--sm btn--primary" href="#/accounts">
+            <icon name="smartphone" :size="13"></icon> 去添加托管账号</a>
+          <a class="btn btn--sm" href="#/packages">
+            <icon name="box" :size="13"></icon> 查看当前套餐</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card__head"><div class="card__title">我的兑换记录</div>
+        <div class="card__actions">
+          <button class="btn btn--sm btn--ghost" @click="loadHistory" :disabled="loading">
+            <icon name="refresh" :size="13" :class="{ spin: loading }"></icon>
+          </button>
+        </div>
+      </div>
+      <div class="card__body" style="padding:0">
+        <data-table :loading="loading" :error="error" :empty="!items.length" :colspan="4"
+                    empty-title="还没有兑换记录"
+                    empty-hint="兑换成功后，这里会显示每次兑换的明细。"
+                    @retry="loadHistory">
+          <template #head>
+            <thead><tr><th>卡密</th><th>类型</th><th class="is-num">增加</th><th>时间</th></tr></thead>
+          </template>
+          <tr v-for="row in items" :key="row.id">
+            <td class="is-mono">
+              {{ maskCode(row.code || row.card_code) }}
+              <div class="row-sub" v-if="row.package_name">{{ row.package_name }}</div>
+            </td>
+            <td>
+              <status-tag kind="redemption" :value="row.kind"></status-tag>
+              <div class="row-sub" v-if="row.amount_cents"><money :cents="row.amount_cents"></money></div>
+            </td>
+            <td class="is-num">
+              <span v-if="row.days_added">{{ row.days_added }} 天</span>
+              <span v-else class="text-muted">—</span>
+            </td>
+            <td class="nowrap">
+              <time-text :value="row.created_at" mode="minute"></time-text>
+              <div class="row-sub" v-if="rowExpire(row)">
+                至 <time-text :value="rowExpire(row)" mode="date"></time-text>
+              </div>
+            </td>
+          </tr>
+        </data-table>
+        <pager :page="page" :pages="pages" :total="total" :page-size="pageSize" :show-size="false"
+               @change="p => { page = p; loadHistory(); }"></pager>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__head"><div class="card__title">使用说明</div></div>
+      <div class="card__body fs-13 text-2">
+        <p>· 时长卡：在现有到期时间上顺延天数，未开通则直接开通。</p>
+        <p>· 次数卡：增加「每天的额外执行次数」，有效期与套餐到期时间一致。</p>
+        <p>· 余额卡：金额直接充入账户余额，可用于「余额支付」下单。</p>
+        <p class="mb-0">· 每张卡密只能兑换一次；兑换成功不可撤销，请核对卡密后再提交。</p>
+      </div>
+    </div>
+  </div>
+</div>

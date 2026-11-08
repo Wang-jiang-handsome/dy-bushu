@@ -1,0 +1,272 @@
+<page-head :title="isEdit ? '编辑定时任务' : '新建定时任务'"
+           :sub="isEdit ? ('任务 #' + id + '　保存后立即生效') : '设置好时间与文案，到点自动给好友发送火花消息'">
+  <a class="btn btn--sm" href="#/tasks"><icon name="chevronLeft" :size="14"></icon> 返回列表</a>
+  <button class="btn btn--sm btn--primary" @click="submit" :disabled="submitting || loading"
+          :class="{ 'is-loading': submitting }">
+    <icon name="refresh" :size="14" class="spin" v-if="submitting"></icon>
+    <icon name="check" :size="14" v-else></icon>
+    {{ isEdit ? '保存修改' : '创建任务' }}
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="isEdit ? loadTask() : loadAccounts()">重试</button>
+</alert>
+
+<div v-if="loading" class="card"><div class="card__body"><div class="skeleton skeleton--block"></div></div></div>
+
+<form v-else @submit.prevent="submit">
+  <div class="grid grid--sidebar">
+    <div>
+      <div class="card">
+        <div class="card__head"><div class="card__title">基本信息</div></div>
+        <div class="card__body">
+          <alert type="error" :message="formError" v-if="formError"></alert>
+          <div class="form-grid">
+            <field label="托管账号" required hint="要在哪个抖音账号上执行">
+              <span class="select-wrap">
+                <select class="select" v-model="form.account_id" @change="loadFriends">
+                  <option value="">请选择账号</option>
+                  <option v-for="a in accounts" :key="a.id" :value="a.id">
+                    {{ a.nickname || a.remark || ('账号 #' + a.id) }}
+                    {{ a.status === 'online' ? '' : '（登录态异常）' }}
+                  </option>
+                </select>
+              </span>
+            </field>
+            <field label="任务名称" required hint="方便自己在列表里区分">
+              <input class="input" v-model="form.name" maxlength="40" placeholder="例如：自动续火花" />
+            </field>
+            <field label="任务类型">
+              <span class="select-wrap">
+                <select class="select" v-model="form.task_type">
+                  <option v-for="o in OPTIONS.task_type" :key="o.value" :value="o.value">{{ o.label }}</option>
+                </select>
+              </span>
+            </field>
+            <field label="启用状态" hint="停用后不会自动执行，但保留配置">
+              <label class="switch">
+                <input type="checkbox" v-model="form.enabled" />
+                <span class="switch__track"></span>
+                <span>{{ form.enabled ? '已启用' : '已停用' }}</span>
+              </label>
+            </field>
+          </div>
+          <div class="alert alert--warn mt-12 mb-0" v-if="form.account_id && accounts.length">
+            <icon name="alert" :size="15" style="margin-top:2px"></icon>
+            <div class="alert__body">
+              提醒：抖音账号必须保持「登录正常」，否则任务会失败。可在
+              <a href="#/accounts">账号页</a> 扫码重新登录。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head">
+          <div>
+            <div class="card__title">执行计划</div>
+            <div class="card__sub">时间按所选时区解释；随机抖动用于避免整点集中触发</div>
+          </div>
+        </div>
+        <div class="card__body">
+          <div class="form-grid">
+            <field label="重复模式" required>
+              <span class="select-wrap">
+                <select class="select" v-model="form.repeat_mode">
+                  <option v-for="o in repeatOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+                </select>
+              </span>
+            </field>
+
+            <field label="执行时间" :required="form.repeat_mode !== 'interval'"
+                   hint="24 小时制，例如 08:30">
+              <input class="input" type="time" v-model="form.time_of_day"
+                     :disabled="form.repeat_mode === 'interval'" />
+            </field>
+
+            <field label="固定间隔（分钟）" v-if="form.repeat_mode === 'interval'" required
+                   hint="例如 1440 = 每天一次，60 = 每小时一次">
+              <input class="input" type="number" min="5" v-model.number="form.interval_minutes" />
+            </field>
+
+            <field label="自定义星期" v-if="form.repeat_mode === 'custom'" required :span="2">
+              <div class="check-list">
+                <label class="checkbox" v-for="d in OPTIONS.weekdays" :key="d.value">
+                  <input type="checkbox" :value="d.value" v-model="form.weekdays" />
+                  <span>{{ d.label }}</span>
+                </label>
+              </div>
+            </field>
+
+            <field label="随机抖动（秒）" hint="在设定时间前后随机浮动，0 表示准点执行">
+              <input class="input" type="number" min="0" max="3600" v-model.number="form.jitter_seconds" />
+            </field>
+
+            <field label="时区" hint="默认取站点配置的时区">
+              <span class="select-wrap">
+                <select class="select" v-model="form.timezone">
+                  <option v-for="z in timezoneOptions" :key="z" :value="z">{{ z }}</option>
+                </select>
+              </span>
+            </field>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head">
+          <div>
+            <div class="card__title">发送内容</div>
+            <div class="card__sub">每行一条候选文案，每次执行随机挑一条</div>
+          </div>
+          <div class="card__actions">
+            <button type="button" class="btn btn--sm btn--ghost" @click="resetMessages">
+              <icon name="refresh" :size="13"></icon> 恢复默认
+            </button>
+          </div>
+        </div>
+        <div class="card__body">
+          <field :hint="'当前共 ' + messageList.length + ' 条候选文案'"
+                 error="至少填写一条文案">
+            <textarea class="textarea" rows="5" v-model="form.messages_text"
+                      placeholder="火花不能断 🔥&#10;打卡 ✨"></textarea>
+          </field>
+          <div class="flex-gap mt-8" v-if="messageList.length">
+            <span class="tag tag--primary" v-for="(m, i) in messageList" :key="i">{{ m }}</span>
+          </div>
+
+          <div class="form-grid mt-16">
+            <field label="发送间隔最小值（秒）" required hint="好友之间随机等待的最小秒数">
+              <input class="input" type="number" min="1" max="600" v-model.number="form.gap_min" />
+            </field>
+            <field label="发送间隔最大值（秒）" required hint="建议 3～15 秒，太短容易触发风控">
+              <input class="input" type="number" min="1" max="600" v-model.number="form.gap_max" />
+            </field>
+            <field label="每个好友每天上限" required hint="同一好友每天最多发几条">
+              <input class="input" type="number" min="1" max="20" v-model.number="form.daily_limit" />
+            </field>
+            <field label="失败重试次数" hint="单次执行内失败后的重试次数">
+              <input class="input" type="number" min="0" max="5" v-model.number="form.max_retry" />
+            </field>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card__head">
+          <div class="card__title">好友范围</div>
+          <div class="card__actions">
+            <button type="button" class="btn btn--sm btn--ghost" @click="loadFriends"
+                    :disabled="!form.account_id || friendsLoading">
+              <icon name="refresh" :size="13" :class="{ spin: friendsLoading }"></icon> 刷新
+            </button>
+          </div>
+        </div>
+        <div class="card__body">
+          <div class="field">
+            <span class="select-wrap">
+              <select class="select" v-model="form.friend_mode">
+                <option v-for="o in friendModeOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </span>
+          </div>
+
+          <div v-if="form.friend_mode === 'selected'" class="mt-12">
+            <div class="flex-between mb-8">
+              <span class="fs-12 text-muted">
+                已选 {{ form.friend_ids.length }} / {{ friends.length }}
+              </span>
+              <button type="button" class="link-btn fs-12" @click="toggleAllFriends" :disabled="!friends.length">
+                {{ allFriendsSelected ? '取消全选' : '全选' }}
+              </button>
+            </div>
+            <div v-if="friendsLoading"><loading></loading></div>
+            <!-- 加载失败要和「真的没有好友」区分：以前失败也显示「还没有好友」，误导排查 -->
+            <empty-state v-else-if="friendsError" icon="alert" title="好友列表加载失败"
+                         :hint="friendsError">
+              <button class="btn btn--sm" @click="loadFriends">重试</button>
+            </empty-state>
+            <empty-state v-else-if="!friends.length" icon="users" title="该账号还没有好友"
+                         hint="先到好友管理添加，或从抖音最近会话同步。">
+              <a class="btn btn--sm" href="#/friends">去添加好友</a>
+            </empty-state>
+            <div v-else class="check-list check-list--col" style="max-height:320px;overflow:auto">
+              <label class="checkbox" v-for="f in friends" :key="f.id">
+                <input type="checkbox" :value="Number(f.id)" v-model="form.friend_ids" />
+                <span>{{ f.nickname }}
+                  <span class="text-muted fs-12" v-if="f.spark_days">（火花 {{ f.spark_days }} 天）</span>
+                </span>
+              </label>
+            </div>
+          </div>
+          <div class="text-muted fs-12 mt-12" v-else>
+            全部好友：该账号下所有已启用的好友都会收到消息。
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head">
+          <div class="card__title">高级设置</div>
+          <div class="card__actions">
+            <button type="button" class="btn btn--sm btn--ghost" @click="showAdvanced = !showAdvanced">
+              {{ showAdvanced ? '收起' : '展开' }}
+            </button>
+          </div>
+        </div>
+        <div class="card__body" v-if="showAdvanced">
+          <field label="Cron 表达式" hint="填写后优先生效（需要了解 cron 语法）；留空则使用上面的可视化配置">
+            <input class="input is-mono" v-model="form.cron_expr" placeholder="0 30 8 * * *" />
+          </field>
+        </div>
+        <div class="card__body" v-else>
+          <div class="text-muted fs-13">默认使用可视化配置。需要精确到「某天某点」的复杂计划时，可展开填写 Cron 表达式。</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head"><div class="card__title">配置摘要</div></div>
+        <div class="card__body">
+          <div class="kv-list">
+            <div class="kv-list__row">
+              <div class="kv-list__k">执行计划</div>
+              <div class="kv-list__v">
+                <span class="is-mono">{{ form.repeat_mode === 'interval' ? ('每 ' + form.interval_minutes + ' 分钟') : form.time_of_day }}</span>
+                · {{ statusText('repeat', form.repeat_mode) }}
+                <span v-if="form.repeat_mode === 'custom'">（{{ fmt.weekdayText(form.weekdays) }}）</span>
+              </div>
+            </div>
+            <div class="kv-list__row">
+              <div class="kv-list__k">好友范围</div>
+              <div class="kv-list__v">
+                {{ statusText('friendMode', form.friend_mode) }}
+                <span v-if="form.friend_mode === 'selected'">（{{ form.friend_ids.length }} 位）</span>
+              </div>
+            </div>
+            <div class="kv-list__row">
+              <div class="kv-list__k">发送节奏</div>
+              <div class="kv-list__v">{{ form.gap_min }}～{{ form.gap_max }} 秒 / 人，抖动 ±{{ form.jitter_seconds }} 秒</div>
+            </div>
+            <div class="kv-list__row">
+              <div class="kv-list__k">候选文案</div>
+              <div class="kv-list__v">{{ messageList.length }} 条</div>
+            </div>
+          </div>
+          <div class="btn-row mt-16">
+            <button class="btn btn--primary btn--block" type="submit" :disabled="submitting"
+                    :class="{ 'is-loading': submitting }">
+              <icon name="refresh" :size="14" class="spin" v-if="submitting"></icon>
+              <icon name="check" :size="14" v-else></icon>
+              {{ isEdit ? '保存修改' : '创建任务' }}
+            </button>
+            <a class="btn btn--block" href="#/tasks">取消</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>

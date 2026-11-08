@@ -1,0 +1,118 @@
+<page-head title="账号总览" :sub="'共 ' + total + ' 个托管账号　本页登录正常 ' + onlineCount + ' 个'">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field toolbar__grow">
+      <label class="field__label">关键字</label>
+      <input class="input" v-model="filters.keyword" placeholder="昵称 / 抖音号 / 备注 / 用户名"
+             @keyup.enter="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">状态</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.status" @change="search">
+          <option v-for="o in statusOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">用户 ID</label>
+      <input class="input" v-model="filters.user_id" placeholder="按用户筛选" @keyup.enter="search"
+             style="width:120px" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="''" :empty="!items.length" :colspan="8"
+              empty-title="没有符合条件的账号"
+              empty-hint="用户绑定抖音账号后，这里会显示总览。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>账号</th><th>归属用户</th><th>抖音号</th><th>状态</th>
+          <th class="is-num">好友 / 任务</th><th>登录态</th><th>最近检测</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td>
+        <div class="flex-center gap-6">
+          <span class="avatar">
+            <img v-if="row.avatar" :src="row.avatar" alt="" />
+            <span v-else>{{ (row.nickname || '?').slice(0, 1) }}</span>
+          </span>
+          <div style="min-width:0">
+            <div class="row-title">{{ row.nickname || ('账号 #' + row.id) }}</div>
+            <div class="row-sub is-mono">#{{ row.id }}<span v-if="row.remark"> · {{ row.remark }}</span></div>
+          </div>
+        </div>
+      </td>
+      <td>
+        <span v-if="row.username">{{ row.username }}</span>
+        <span v-else class="text-muted">—</span>
+        <div class="row-sub" v-if="row.user_id">用户 #{{ row.user_id }}</div>
+      </td>
+      <td class="is-mono">
+        <span v-if="row.douyin_uid">{{ row.douyin_uid }}</span>
+        <span v-else class="text-muted">—</span>
+      </td>
+      <td>
+        <span class="select-wrap" style="min-width:118px">
+          <select class="select" :value="row.status" :disabled="acting === row.id"
+                  @change="changeStatus(row, $event.target.value)">
+            <option v-for="o in OPTIONS.account_status" :key="o.value" :value="o.value">{{ o.label }}</option>
+          </select>
+        </span>
+        <div class="row-sub" v-if="row.paused"><span class="tag tag--muted">已暂停</span></div>
+      </td>
+      <td class="is-num">
+        <span v-if="row.friend_count !== undefined">{{ row.friend_count }} / {{ row.task_count || 0 }}</span>
+        <span v-else class="text-muted">—</span>
+      </td>
+      <td>
+        <span class="tag" :class="row.has_session ? 'tag--success' : 'tag--muted'">
+          {{ row.has_session ? '已保存' : '无登录态' }}</span>
+        <div class="row-sub" v-if="row.storage_updated_at">
+          <time-text :value="row.storage_updated_at" mode="ago"></time-text>
+        </div>
+      </td>
+      <td class="nowrap">
+        <span v-if="row.last_check_at"><time-text :value="row.last_check_at" mode="ago"></time-text></span>
+        <span v-else class="text-muted">未检测</span>
+        <div class="row-sub text-danger" v-if="row.last_error" :title="row.last_error">
+          {{ row.last_error }}
+        </div>
+      </td>
+      <td class="is-actions">
+        <button class="btn btn--sm btn--ghost" @click="changeStatus(row, 'offline')"
+                :disabled="acting === row.id" title="强制标记为未登录（用户需重新扫码）">
+          <icon name="power" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<div class="card">
+  <div class="card__head"><div class="card__title">说明</div></div>
+  <div class="card__body fs-13 text-2">
+    <p>· 账号状态由系统在每次执行/检测后自动更新；管理员手动修改会立即生效并影响任务调度。</p>
+    <p>· 「登录态已保存」表示本地有 cookies 文件，但不代表一定有效，用户端可点「检测」验证。</p>
+    <p class="mb-0">· 无法在此代用户扫码登录：扫码必须在用户端由用户本人完成（安全设计）。</p>
+  </div>
+</div>

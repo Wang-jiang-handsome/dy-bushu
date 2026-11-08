@@ -1,0 +1,375 @@
+<page-head title="系统环境"
+           :sub="'体检结果、运行指标与调度器心跳　' + ((env && env.engine_ready) ? '浏览器引擎就绪' : '浏览器引擎未就绪')">
+  <button class="btn btn--sm" @click="load(); loadProcs(); loadMail()" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 重新体检
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div v-if="loading && !env" class="card"><div class="card__body"><div class="skeleton skeleton--block"></div></div></div>
+
+<template v-if="env">
+  <!-- 关键状态 -->
+  <div class="grid grid--4 mb-16">
+    <stat-card label="Python 环境" icon="cpu"
+               :tone="environment.python_ok ? 'success' : 'danger'"
+               :value="environment.python_ok ? '正常' : '异常'"
+               :hint="environment.python_version || '—'"></stat-card>
+    <stat-card label="数据库" icon="database" :tone="database.ok ? 'success' : 'danger'"
+               :value="database.ok ? '可写' : '异常'"
+               :hint="(database.tables || 0) + ' 张表 · ' + fmt.bytes(database.size_bytes)"></stat-card>
+    <stat-card label="浏览器引擎" icon="globe" :tone="environment.browser_found ? 'success' : 'warn'"
+               :value="environment.browser_found ? '已找到' : '未找到'"
+               :hint="environment.browser_path || '需要安装 Chrome/Chromium'"></stat-card>
+    <stat-card label="运行时长" icon="activity"
+               :value="fmt.uptime(metrics.uptime_seconds)"
+               :hint="'累计请求 ' + (metrics.requests || 0) + ' 次'"></stat-card>
+  </div>
+
+  <div class="grid grid--sidebar">
+    <div>
+      <div class="card">
+        <div class="card__head">
+          <div class="card__title">环境体检</div>
+          <div class="card__actions">
+            <span class="tag" :class="environment.demo_mode ? 'tag--warn' : 'tag--success'">
+              {{ environment.demo_mode ? '演示模式（不会真启动浏览器）' : '生产模式' }}</span>
+          </div>
+        </div>
+        <div class="card__body">
+          <div class="desc desc--wide">
+            <div class="desc__k">操作系统</div><div class="desc__v">{{ environment.platform || '—' }}</div>
+            <div class="desc__k">Python 版本</div>
+            <div class="desc__v is-mono">{{ environment.python_version || '—' }}</div>
+            <div class="desc__k">时区</div>
+            <div class="desc__v">{{ environment.timezone || '—' }}
+              <span class="tag" :class="environment.tzdata_ok ? 'tag--success' : 'tag--warn'" style="margin-left:6px">
+                {{ environment.tzdata_ok ? '时区库可用' : '时区库缺失（会退回 +08:00）' }}</span>
+            </div>
+            <div class="desc__k">磁盘可用</div>
+            <div class="desc__v">{{ environment.disk_free_gb }} GB / 共 {{ environment.disk_total_gb }} GB</div>
+            <div class="desc__k">内存总量</div>
+            <div class="desc__v">{{ environment.memory_total_mb }} MB</div>
+            <div class="desc__k">浏览器路径</div>
+            <div class="desc__v is-mono" style="word-break:break-all">
+              {{ environment.browser_path || '未探测到' }}</div>
+            <div class="desc__k">数据目录</div>
+            <div class="desc__v is-mono" style="word-break:break-all">{{ environment.data_dir || '—' }}</div>
+            <div class="desc__k">数据库文件</div>
+            <div class="desc__v is-mono" style="word-break:break-all">{{ database.path || '—' }}</div>
+            <div class="desc__k">schema 版本</div>
+            <div class="desc__v is-mono">{{ database.schema_version || '—' }}</div>
+            <div class="desc__k">journal 模式</div>
+            <div class="desc__v is-mono">{{ database.journal_mode || '—' }}</div>
+          </div>
+          <div class="alert alert--warn mt-12" v-if="!environment.browser_found">
+            <icon name="alert" :size="15" style="margin-top:2px"></icon>
+            <div class="alert__body">
+              未找到 Chrome/Chromium，自动续火花无法执行。部署机上安装 chromium 后重启服务，或在
+              <code>.env</code> 里设置 <code>SK_CHROME_PATH</code> 指向浏览器可执行文件。
+            </div>
+          </div>
+          <div class="alert alert--info mt-12 mb-0" v-if="environment.demo_mode">
+            <icon name="info" :size="15" style="margin-top:2px"></icon>
+            <div class="alert__body">
+              当前处于演示模式（<code>SK_DEMO_MODE=1</code>）：任务流程会跑通但不真正操作浏览器。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head">
+          <div>
+            <div class="card__title">浏览器进程池</div>
+            <div class="card__sub">并发占满时新任务会排队；残留进程可手动清理</div>
+          </div>
+          <div class="card__actions">
+            <button class="btn btn--sm" @click="loadProcs"><icon name="refresh" :size="13"></icon> 刷新</button>
+            <button class="btn btn--sm" @click="cleanup" :disabled="cleaning"
+                    :class="{ 'is-loading': cleaning }">
+              <icon name="trash" :size="13"></icon> 清理残留进程
+            </button>
+          </div>
+        </div>
+        <div class="card__body">
+          <alert type="error" :message="procsError" v-if="procsError"></alert>
+          <div v-if="!procs" class="text-muted fs-13">未获取到进程池信息。</div>
+          <template v-else>
+            <div class="grid grid--4 mb-12">
+              <div class="stat">
+                <div class="stat__body">
+                  <div class="stat__label">使用中 / 上限</div>
+                  <div class="stat__value">{{ procUsed }} <small>/ {{ procs.limit || procs.max || '—' }}</small></div>
+                </div>
+              </div>
+              <div class="stat"><div class="stat__body">
+                <div class="stat__label">等待队列</div>
+                <div class="stat__value">{{ procs.waiting || 0 }}</div>
+              </div></div>
+              <div class="stat"><div class="stat__body">
+                <div class="stat__label">累计获取 / 释放</div>
+                <div class="stat__value">{{ procs.acquired_total || 0 }}
+                  <small>/ {{ procs.released_total || 0 }}</small></div>
+              </div></div>
+              <div class="stat"><div class="stat__body">
+                <div class="stat__label">被拒绝</div>
+                <div class="stat__value" :class="procs.rejected_total ? 'text-danger' : ''">
+                  {{ procs.rejected_total || 0 }}</div>
+              </div></div>
+            </div>
+            <div class="progress mb-12">
+              <div class="progress__bar" :class="{ 'progress__bar--warn': procPct >= 80 }"
+                   :style="{ width: procPct + '%' }"></div>
+            </div>
+            <div class="fs-13 text-2 mb-8">
+              引擎状态：<span class="tag" :class="procs.engine_ready ? 'tag--success' : 'tag--warn'">
+                {{ procs.engine_ready ? '就绪' : '未就绪' }}</span>
+              <span v-if="procs.name" class="text-muted"> · {{ procs.name }}</span>
+            </div>
+            <data-table :loading="false" :error="''" :empty="!(procs.items || []).length" :colspan="4"
+                        empty-title="当前没有运行中的浏览器进程"
+                        empty-hint="任务执行时才会启动浏览器，执行完自动回收。">
+              <template #head>
+                <thead><tr><th>进程 / 槽位</th><th>状态</th><th>占用者</th><th>启动时间</th></tr></thead>
+              </template>
+              <tr v-for="(p, i) in (procs.items || [])" :key="i">
+                <td class="is-mono">{{ p.name || p.id || p.pid || ('槽位 #' + (i + 1)) }}</td>
+                <td><span class="tag tag--info">{{ p.status || p.state || '运行中' }}</span></td>
+                <td>{{ p.owner || p.task || p.account || '—' }}</td>
+                <td class="nowrap">
+                  <span v-if="p.started_at"><time-text :value="p.started_at" mode="minute"></time-text></span>
+                  <span v-else class="text-muted">—</span>
+                </td>
+              </tr>
+            </data-table>
+          </template>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head"><div class="card__title">调度器心跳</div>
+          <div class="card__sub">worker 每 tick 写一次；长时间无心跳说明调度器没在跑</div>
+        </div>
+        <data-table :loading="false" :error="''" :empty="!heartbeats.length" :colspan="5"
+                    empty-title="没有 worker 心跳"
+                    empty-hint="用 python main.py serve 启动（带内置调度器）或单独跑 python main.py worker。">
+          <template #head>
+            <thead>
+              <tr><th>worker</th><th>类型</th><th>状态</th><th>PID</th><th>最近心跳</th></tr>
+            </thead>
+          </template>
+          <tr v-for="h in heartbeats" :key="h.worker_id">
+            <td class="is-mono">{{ h.worker_id }}</td>
+            <td>{{ h.kind || '—' }}</td>
+            <td><span class="tag" :class="h.status === 'idle' ? 'tag--muted' : 'tag--info'">
+              {{ h.status || '—' }}</span></td>
+            <td class="is-mono">{{ h.pid || '—' }}</td>
+            <td class="nowrap">
+              <time-text :value="h.beat_at" mode="minute"></time-text>
+              <div class="row-sub">{{ agoText(h.beat_at) }}</div>
+            </td>
+          </tr>
+        </data-table>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card__head"><div class="card__title">运行指标</div></div>
+        <div class="card__body">
+          <div class="kv-list">
+            <div class="kv-list__row">
+              <div class="kv-list__k">累计请求</div>
+              <div class="kv-list__v">{{ fmt.number(metrics.requests || 0) }}</div>
+            </div>
+            <div class="kv-list__row">
+              <div class="kv-list__k">错误次数</div>
+              <div class="kv-list__v" :class="metrics.errors ? 'text-danger' : ''">{{ metrics.errors || 0 }}</div>
+            </div>
+            <div class="kv-list__row">
+              <div class="kv-list__k">平均响应</div>
+              <div class="kv-list__v">{{ metrics.avg_ms || 0 }} ms</div>
+            </div>
+            <div class="kv-list__row">
+              <div class="kv-list__k">最慢响应</div>
+              <div class="kv-list__v">{{ metrics.max_ms || 0 }} ms</div>
+            </div>
+            <div class="kv-list__row">
+              <div class="kv-list__k">运行时长</div>
+              <div class="kv-list__v">{{ fmt.uptime(metrics.uptime_seconds) }}</div>
+            </div>
+          </div>
+          <div class="alert alert--error mt-12" v-if="metrics.last_error">
+            <icon name="alert" :size="15" style="margin-top:2px"></icon>
+            <div class="alert__body is-mono fs-12" style="word-break:break-all">{{ metrics.last_error }}</div>
+          </div>
+          <template v-if="(metrics.slow || []).length">
+            <div class="section-title mt-16">慢请求（&gt;1s）</div>
+            <div class="kv-list">
+              <div class="kv-list__row" v-for="(s, i) in metrics.slow" :key="i">
+                <div class="kv-list__v is-mono fs-12">{{ s[0] }}</div>
+                <div class="kv-list__k text-right">{{ s[1] }} ms</div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head"><div class="card__title">数据量统计</div></div>
+        <div class="card__body">
+          <div class="kv-list">
+            <div class="kv-list__row" v-for="(v, k) in counts" :key="k">
+              <div class="kv-list__k">{{ k }}</div>
+              <div class="kv-list__v">{{ v }}</div>
+            </div>
+            <div class="kv-list__row" v-if="!Object.keys(counts).length">
+              <div class="kv-list__v text-muted">后端未返回数据量统计。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head"><div class="card__title">邮件 / 短信</div>
+          <div class="card__actions">
+            <button class="btn btn--sm btn--ghost" @click="loadMail"><icon name="refresh" :size="13"></icon></button>
+          </div>
+        </div>
+        <div class="card__body">
+          <alert type="error" :message="mailError" v-if="mailError"></alert>
+          <div v-if="!mail" class="text-muted fs-13">未获取到邮件配置状态。</div>
+          <template v-else>
+            <div class="kv-list">
+              <div class="kv-list__row">
+                <div class="kv-list__k">SMTP</div>
+                <div class="kv-list__v">
+                  <span class="tag" :class="mail.smtp_configured ? 'tag--success' : 'tag--warn'">
+                    {{ mail.smtp_configured ? '已配置' : '未配置' }}</span>
+                  <span v-if="mail.smtp_host" class="is-mono"> {{ mail.smtp_host }}</span>
+                </div>
+              </div>
+              <div class="kv-list__row">
+                <div class="kv-list__k">短信通道</div>
+                <div class="kv-list__v">
+                  <span class="tag" :class="mail.sms_provider ? 'tag--success' : 'tag--muted'">
+                    {{ mail.sms_provider || '未配置（验证码写入日志）' }}</span>
+                </div>
+              </div>
+              <div class="kv-list__row">
+                <div class="kv-list__k">待发送 / 失败</div>
+                <div class="kv-list__v">{{ mail.pending || 0 }} / {{ mail.failed || 0 }}</div>
+              </div>
+            </div>
+            <div class="field mt-12">
+              <label class="field__label">发送测试邮件</label>
+              <div class="input-affix">
+                <input class="input" v-model="mailTo" placeholder="接收邮箱" />
+                <button class="input-affix__btn" :disabled="sendingMail" @click="sendTestMail">
+                  {{ sendingMail ? '发送中…' : '发送' }}
+                </button>
+              </div>
+              <div class="field__hint" v-if="!mail.smtp_configured">
+                未配置 SMTP，可在 <code>.env</code> 里设置 SK_SMTP_HOST 等参数后重启。
+              </div>
+            </div>
+            <template v-if="(mail.recent || []).length">
+              <div class="section-title mt-16">最近发送记录</div>
+              <div class="kv-list">
+                <div class="kv-list__row" v-for="(m, i) in mail.recent" :key="i">
+                  <div class="kv-list__v">
+                    <div class="is-mono fs-12">{{ m.target || m.to || '—' }}</div>
+                    <div class="row-sub">
+                      <span class="tag" :class="m.status === 'sent' ? 'tag--success' : 'tag--warn'">
+                        {{ m.status || '未知' }}</span>
+                      <span v-if="m.created_at"> · <time-text :value="m.created_at" mode="minute"></time-text></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </template>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head"><div class="card__title">AI 文案</div>
+          <div class="card__actions">
+            <button class="btn btn--sm" @click="testAi" :disabled="testingAi"
+                    :class="{ 'is-loading': testingAi }">测试生成</button>
+          </div>
+        </div>
+        <div class="card__body">
+          <alert type="error" :message="aiError" v-if="aiError"></alert>
+          <div v-if="!ai" class="text-muted fs-13">未获取到 AI 状态。</div>
+          <template v-else>
+            <div class="kv-list">
+              <div class="kv-list__row">
+                <div class="kv-list__k">状态</div>
+                <div class="kv-list__v">
+                  <span class="tag" :class="ai.enabled ? 'tag--success' : 'tag--muted'">
+                    {{ ai.enabled ? '已启用' : '未配置' }}</span>
+                </div>
+              </div>
+              <div class="kv-list__row">
+                <div class="kv-list__k">提供方 / 模型</div>
+                <div class="kv-list__v is-mono">{{ ai.provider || '—' }} {{ ai.model ? '/ ' + ai.model : '' }}</div>
+              </div>
+              <div class="kv-list__row" v-if="ai.message">
+                <div class="kv-list__k">说明</div>
+                <div class="kv-list__v">{{ ai.message }}</div>
+              </div>
+            </div>
+            <pre class="code-block mt-12" v-if="ai.last_result">{{ ai.last_result }}</pre>
+            <div class="fs-12 text-muted mt-8" v-if="!ai.enabled">
+              未配置 AI 时「测试生成」会返回 400 与说明，这是预期行为，不影响系统运行。
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head"><div class="card__title">版本与授权</div></div>
+        <div class="card__body">
+          <div class="kv-list">
+            <div class="kv-list__row" v-if="update">
+              <div class="kv-list__k">当前版本</div>
+              <div class="kv-list__v is-mono">{{ update.current_version || appVersion }}
+                <span class="text-muted" v-if="update.build"> (build {{ update.build }})</span>
+              </div>
+            </div>
+            <div class="kv-list__row" v-if="update">
+              <div class="kv-list__k">更新检查</div>
+              <div class="kv-list__v">
+                <span class="tag" :class="update.update_available ? 'tag--warn' : 'tag--muted'">
+                  {{ update.update_available ? ('有新版本 ' + (update.latest_version || ''))
+                     : (update.offline ? '离线模式（不做联网检查）' : '已是最新') }}</span>
+                <div class="fs-12 text-muted mt-8">{{ update.message || '' }}</div>
+              </div>
+            </div>
+            <div class="kv-list__row" v-if="license">
+              <div class="kv-list__k">授权类型</div>
+              <div class="kv-list__v">
+                {{ license.license || '—' }} · {{ license.edition || '' }}
+                <div class="fs-12 text-muted">{{ license.message || '' }}</div>
+              </div>
+            </div>
+            <div class="kv-list__row" v-if="license && license.max_users">
+              <div class="kv-list__k">授权用户数</div>
+              <div class="kv-list__v">{{ license.max_users }}</div>
+            </div>
+            <div class="kv-list__row" v-if="license && license.expire_at">
+              <div class="kv-list__k">授权到期</div>
+              <div class="kv-list__v"><time-text :value="license.expire_at" mode="time"></time-text></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

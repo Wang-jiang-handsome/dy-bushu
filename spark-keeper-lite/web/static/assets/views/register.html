@@ -1,0 +1,92 @@
+<div class="auth-card">
+  <div class="auth-hero">
+    <div class="auth-hero__badge"><icon name="flame" :size="14"></icon> 新用户注册</div>
+    <h1>开始自动续火花</h1>
+    <p>注册后可免费领取体验套餐（以管理员配置为准），绑定抖音账号即可创建定时任务。</p>
+    <ul class="auth-hero__list">
+      <li><icon name="smartphone" :size="15"></icon><span>支持扫码 / 短信两种登录方式</span></li>
+      <li><icon name="clock" :size="15"></icon><span>按天、按工作日或自定义间隔执行</span></li>
+      <li><icon name="key" :size="15"></icon><span>也可以直接用卡密开通或续期</span></li>
+    </ul>
+  </div>
+
+  <form class="auth-form" @submit.prevent="submit">
+    <div>
+      <div class="auth-form__title">创建账号</div>
+      <div class="auth-form__sub">
+        带 <span class="text-danger">*</span> 的为必填项
+        <span v-if="needVerify" class="text-warn">（本站开启了邮箱验证）</span>
+      </div>
+    </div>
+
+    <alert type="error" :message="error" v-if="error"></alert>
+    <alert type="info" v-if="devCode" :message="'未配置邮件通道，本地验证码：' + devCode"></alert>
+
+    <div class="form-grid form-grid--1" style="gap:12px">
+      <div class="field">
+        <label class="field__label">用户名 <span class="req">*</span></label>
+        <input class="input" v-model="form.username" autocomplete="username"
+               placeholder="3-20 位字母、数字或下划线" />
+      </div>
+
+      <div class="form-grid" style="gap:12px">
+        <div class="field">
+          <label class="field__label">密码 <span class="req">*</span></label>
+          <input class="input" type="password" v-model="form.password" autocomplete="new-password"
+                 placeholder="至少 8 位" />
+        </div>
+        <div class="field">
+          <label class="field__label">确认密码 <span class="req">*</span></label>
+          <input class="input" type="password" v-model="form.confirm_password"
+                 autocomplete="new-password" placeholder="再输入一次" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field__label">昵称</label>
+        <input class="input" v-model="form.nickname" placeholder="选填，默认与用户名相同" />
+      </div>
+
+      <div class="form-grid" style="gap:12px">
+        <div class="field">
+          <label class="field__label">邮箱<span class="req" v-if="needVerify">*</span></label>
+          <input class="input" v-model="form.email" placeholder="用于接收验证码与找回密码" />
+        </div>
+        <div class="field">
+          <label class="field__label">手机号</label>
+          <input class="input" v-model="form.phone" placeholder="选填，需配置短信通道" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field__label">验证码<span class="req" v-if="needVerify">*</span></label>
+        <div class="input-affix">
+          <input class="input" v-model="form.verify_code" placeholder="6 位数字验证码" />
+          <button type="button" class="input-affix__btn" :disabled="sending || countdown > 0"
+                  @click="sendCode">
+            {{ countdown > 0 ? countdown + ' 秒后重发' : (sending ? '发送中…' : '获取验证码') }}
+          </button>
+        </div>
+        <div class="field__hint">
+          优先使用邮箱（{{ codeChannel === 'sms' ? '当前按手机号发送' : '当前按邮箱发送' }}）
+        </div>
+      </div>
+
+      <div class="field" v-if="needInvite">
+        <label class="field__label">邀请码 <span class="req">*</span></label>
+        <input class="input" v-model="form.invite_code" placeholder="请输入邀请码" />
+      </div>
+    </div>
+
+    <button class="btn btn--primary btn--lg btn--block" type="submit"
+            :disabled="submitting" :class="{ 'is-loading': submitting }">
+      <icon name="refresh" :size="15" class="spin" v-if="submitting"></icon>
+      <icon name="user" :size="15" v-else></icon>
+      {{ submitting ? '注册中…' : '注册并登录' }}
+    </button>
+
+    <div class="auth-form__foot">
+      <span>已有账号？</span><a href="#/login">返回登录</a>
+    </div>
+  </form>
+</div>

@@ -1,0 +1,267 @@
+<page-head title="抖音账号"
+           sub="托管账号用于自动续火花。登录态由系统加密保存，这里看不到也不会要求你的抖音密码。">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--primary btn--sm" @click="openCreate">
+    <icon name="plus" :size="14"></icon> 新增账号
+  </button>
+</page-head>
+
+<div class="alert alert--info" v-if="!loading && !items.length && !error">
+  <icon name="info" :size="15" style="margin-top:2px"></icon>
+  <div class="alert__body">
+    还没有托管账号。点击「新增账号」后系统会创建一个占位记录并弹出二维码，用抖音 App 扫码即可完成绑定。
+    扫码登录不需要输入抖音密码。
+  </div>
+</div>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field">
+      <label class="field__label">状态</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.status" @change="search">
+          <option v-for="o in statusOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field toolbar__grow">
+      <label class="field__label">关键字</label>
+      <input class="input" v-model="filters.keyword" placeholder="昵称 / 抖音号 / 备注"
+             @keyup.enter="search" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="error" :empty="!items.length" :colspan="7"
+              empty-title="还没有托管账号"
+              empty-hint="新增账号后扫码登录，然后就可以创建定时任务了。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>账号</th><th>抖音号</th><th>状态</th><th>最近检测</th>
+          <th>备注</th><th>添加时间</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <template #empty-action>
+      <button class="btn btn--primary btn--sm" @click="openCreate">
+        <icon name="plus" :size="13"></icon> 新增账号
+      </button>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td>
+        <div class="flex-center gap-6">
+          <span class="avatar">
+            <img v-if="row.avatar" :src="row.avatar" alt="" />
+            <span v-else>{{ (row.nickname || '?').slice(0, 1) }}</span>
+          </span>
+          <div style="min-width:0">
+            <a class="row-title" :href="'#/accounts/' + row.id">{{ row.nickname || ('账号 #' + row.id) }}</a>
+            <div class="row-sub" v-if="row.phone_masked">手机 {{ row.phone_masked }}</div>
+          </div>
+        </div>
+      </td>
+      <td class="is-mono">
+        <span v-if="row.douyin_uid">{{ row.douyin_uid }}</span>
+        <span v-else class="text-muted">—</span>
+      </td>
+      <td><status-tag kind="account" :value="row.status"></status-tag></td>
+      <td>
+        <span v-if="row.last_check_at"><time-text :value="row.last_check_at" mode="ago"></time-text></span>
+        <span v-else class="text-muted">未检测</span>
+      </td>
+      <td>
+        <span class="ellipsis" :title="row.remark">{{ row.remark || '—' }}</span>
+        <div class="row-sub text-danger" v-if="row.last_error" :title="row.last_error">
+          {{ row.last_error }}
+        </div>
+      </td>
+      <td><time-text :value="row.created_at" mode="date"></time-text></td>
+      <td class="is-actions">
+        <a class="btn btn--sm btn--soft" :href="'#' + '/accounts/' + row.id">
+          <icon name="eye" :size="13"></icon> 详情</a>
+        <button class="btn btn--sm" @click="check(row)" :disabled="checking">
+          <icon name="shield" :size="13"></icon> 检测</button>
+        <button class="btn btn--sm" @click="startLogin(row)">
+          <icon name="qr" :size="13"></icon>
+          {{ row.status === 'online' ? '重新登录' : '扫码登录' }}</button>
+        <button class="btn btn--sm" @click="openCookie(row)"
+                title="扫码登录不成功时：把浏览器里的 Cookie 粘进来">
+          <icon name="key" :size="13"></icon> 导入 Cookie</button>
+        <button class="btn btn--sm btn--ghost" @click="openEdit(row)" title="编辑备注">
+          <icon name="edit" :size="13"></icon></button>
+        <button class="btn btn--sm btn--ghost" @click="remove(row)" title="删除账号">
+          <icon name="trash" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<!-- 新增 / 编辑账号 -->
+<modal v-model="showForm" :title="editing ? '编辑账号' : '新增托管账号'"
+       :sub="editing ? '账号 #' + editing.id : '填写备注后系统会生成扫码二维码'">
+  <alert type="error" :message="formError" v-if="formError"></alert>
+  <div class="form-grid form-grid--1">
+    <field label="备注名" required hint="仅用于你自己区分账号，例如「小号 A」">
+      <input class="input" v-model="form.nickname" placeholder="例如：小号 A" maxlength="40" />
+    </field>
+    <field label="备注" hint="选填，例如用途、使用人">
+      <input class="input" v-model="form.remark" placeholder="选填" maxlength="120" />
+    </field>
+    <field label="登录方式">
+      <span class="select-wrap">
+        <select class="select" v-model="form.login_type">
+          <option value="qrcode">扫码登录（推荐）</option>
+          <option value="sms">短信验证码登录</option>
+        </select>
+      </span>
+    </field>
+    <field label="代理" hint="选填，代理在管理端维护；填 ID 或留空">
+      <input class="input" v-model="form.proxy_id" placeholder="代理 ID，留空表示直连" />
+    </field>
+  </div>
+  <template #foot>
+    <button class="btn" @click="showForm = false" :disabled="submitting">取消</button>
+    <button class="btn btn--primary" @click="saveForm" :disabled="submitting"
+            :class="{ 'is-loading': submitting }">
+      <icon name="refresh" :size="14" class="spin" v-if="submitting"></icon>
+      {{ editing ? '保存' : '创建并生成二维码' }}
+    </button>
+  </template>
+</modal>
+
+<!-- 扫码 / 短信登录 -->
+<modal v-model="showLogin" size="sm"
+       :title="smsMode ? '短信验证码登录' : '扫码登录抖音'"
+       :sub="(loginAccount && (loginAccount.nickname || loginAccount.remark)) || ''"
+       :close-on-backdrop="false" @close="closeLogin">
+  <div class="text-center">
+    <div class="flex-center" style="justify-content:center;gap:8px;margin-bottom:10px">
+      <status-tag kind="login" :value="loginStatus"></status-tag>
+      <span class="fs-12 text-muted" v-if="loginStep">（{{ loginStep }}）</span>
+    </div>
+
+    <template v-if="!smsMode">
+      <!-- 可见窗口模式：后端在**本机**弹出一个真实 Chrome 窗口，用户在窗口里自己登录 -->
+      <div v-if="visibleFallback" class="alert alert--warning" style="text-align:left">
+        <b>服务器没有图形界面</b>：无法弹出浏览器窗口，已自动改用本页二维码登录。<br />
+        请用抖音 App 扫描下方二维码；扫码一直不出图时，可用「导入 Cookie」。
+      </div>
+      <div v-if="visibleBlockedReason() && !visibleMode" class="alert alert--info" style="text-align:left">
+        {{ visibleBlockedReason() }}
+      </div>
+      <div v-if="visibleMode" class="alert alert--info" style="text-align:left">
+        <div class="alert__body">
+          已在本机打开一个 <b>真实 Chrome 窗口</b>，请在那个窗口里：<br />
+          ① 用抖音 App 扫码登录，或用手机号/密码登录；<br />
+          ② 登录成功后本页<b>自动继续</b>，无需其它操作。<br />
+          <span class="text-muted fs-12">
+            （窗口出现在运行本服务的那台电脑上；如果服务在远端服务器/容器里看不到窗口，
+            请改用「导入 Cookie」。）
+          </span>
+        </div>
+      </div>
+      <div class="qr-box" v-if="!visibleMode" :class="{ 'qr-box--empty': !qrImage }">
+        <img v-if="qrImage" :src="qrImage" alt="扫码登录二维码" />
+        <div v-else class="text-muted fs-13">
+          <icon name="refresh" :size="18" class="spin" v-if="qrWaiting"></icon>
+          <div style="margin-top:6px">{{ qrWaiting ? '正在生成二维码…' : '二维码暂不可用' }}</div>
+        </div>
+      </div>
+      <div class="fs-13 text-2 mt-12">{{ loginMessage || '请用抖音 App 扫描二维码并在手机上确认登录' }}</div>
+      <div class="steps mt-12">
+        <span class="steps__item" :class="{ 'is-done': loginStatus !== 'pending' }">1. 扫码</span>
+        <span class="steps__item" :class="{ 'is-done': ['scanned','confirmed','success'].indexOf(loginStatus) >= 0 }">2. 手机确认</span>
+        <span class="steps__item" :class="{ 'is-done': loginStatus === 'success' }">3. 保存登录态</span>
+      </div>
+      <div class="fs-12 text-muted mt-12" v-if="loginExpireAt">
+        二维码有效期至 <time-text :value="loginExpireAt" mode="time"></time-text>
+        <span v-if="loginStatus === 'expired'" class="text-warn">（已过期）</span>
+      </div>
+    </template>
+
+    <template v-else>
+      <alert type="error" :message="smsError" v-if="smsError"></alert>
+      <div class="form-grid form-grid--1 text-left">
+        <field label="手机号" required>
+          <div class="input-affix">
+            <input class="input" v-model="smsPhone" placeholder="用于接收抖音验证码" />
+            <button class="input-affix__btn" :disabled="smsSending" @click="sendSms">
+              {{ smsSending ? '发送中…' : '发送验证码' }}
+            </button>
+          </div>
+        </field>
+        <field label="短信验证码" required>
+          <input class="input" v-model="smsCode" placeholder="请输入收到的验证码" />
+        </field>
+      </div>
+    </template>
+  </div>
+
+  <template #foot>
+    <button class="btn btn--ghost" @click="smsMode = !smsMode" style="margin-right:auto"
+            :disabled="starting">
+      {{ smsMode ? '改用扫码登录' : '改用短信登录' }}
+    </button>
+    <!-- 二维码一直不出来时的兜底：让后端开一个真实可见的浏览器窗口，用户自己登录 -->
+    <button class="btn btn--soft" v-if="!smsMode && !visibleMode"
+            @click="startLogin(loginAccount, { visible: true })"
+            :disabled="starting || !!visibleBlockedReason()"
+            :title="visibleBlockedReason() || '在本机弹出一个真实 Chrome 窗口，你在窗口里扫码或输密码登录'">
+      <icon name="external" :size="14"></icon> 在窗口里登录
+    </button>
+    <button class="btn" @click="closeLogin">取消</button>
+    <button class="btn" v-if="!smsMode" @click="refreshQr" :disabled="starting || terminal">
+      <icon name="refresh" :size="14"></icon> 刷新二维码
+    </button>
+    <button class="btn btn--primary" v-else @click="submitSms" :disabled="smsSending">
+      <icon name="check" :size="14"></icon> 完成登录
+    </button>
+  </template>
+</modal>
+
+<!-- 手动导入 Cookie（扫码登录不成功时的兜底方案） -->
+<modal v-model="showCookie" title="手动导入 Cookie"
+       :sub="'账号：' + ((cookieAccount && (cookieAccount.nickname || cookieAccount.remark)) || '')"
+       :close-on-backdrop="false">
+  <alert type="info">
+    扫码登录依赖抖音网页，遇到「二维码一直不出来」时，用这条路最稳：<br />
+    1. 用 <b>Chrome / Edge</b> 打开 <b>douyin.com</b> 并确认已经登录；<br />
+    2. 按 <b>F12</b> → <b>Application（应用）</b> → <b>Cookies</b> → <b>https://www.douyin.com</b>；<br />
+    3. 找到 <b>sessionid</b> 这一行，双击 Value 复制；<br />
+    4. 粘到下面，格式如：<code>sessionid=xxxxx; ttwid=yyyyy</code>
+    （也可以直接粘整段 Cookie 请求头，或浏览器扩展导出的 JSON）。
+  </alert>
+
+  <div class="form-grid form-grid--1">
+    <field label="Cookie 内容" required
+           hint="必须包含 sessionid；Cookie 等价于账号密码，只保存在本机数据目录，不会外传">
+      <textarea class="input" v-model="cookieText" rows="6" spellcheck="false"
+                placeholder="sessionid=xxxxxxxx; sid_guard=yyyy; ttwid=zzzz"></textarea>
+    </field>
+    <label class="checkbox">
+      <input type="checkbox" v-model="cookieVerify" />
+      <span>导入后立即校验（推荐：会开一次浏览器，让抖音确认这个登录态真的有效）</span>
+    </label>
+  </div>
+
+  <template #foot>
+    <button class="btn" @click="showCookie = false" :disabled="cookieSubmitting">取消</button>
+    <button class="btn btn--primary" @click="submitCookie"
+            :disabled="cookieSubmitting || !cookieText.trim()"
+            :class="{ 'is-loading': cookieSubmitting }">
+      <icon name="refresh" :size="14" class="spin" v-if="cookieSubmitting"></icon>
+      <icon name="key" :size="14" v-else></icon>
+      {{ cookieSubmitting ? '正在导入…' : '导入登录态' }}
+    </button>
+  </template>
+</modal>

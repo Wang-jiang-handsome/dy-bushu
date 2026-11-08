@@ -1,0 +1,167 @@
+<page-head title="执行记录（全站）"
+           :sub="'共 ' + total + ' 条记录　失败原因与截图可用于定位账号登录态问题'">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field">
+      <label class="field__label">状态</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.status" @change="search">
+          <option v-for="o in statusOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">账号 ID</label>
+      <input class="input" v-model="filters.account_id" placeholder="账号 #" @keyup.enter="search"
+             style="width:110px" />
+    </div>
+    <div class="field">
+      <label class="field__label">用户 ID</label>
+      <input class="input" v-model="filters.user_id" placeholder="用户 #" @keyup.enter="search"
+             style="width:110px" />
+    </div>
+    <div class="field">
+      <label class="field__label">开始日期</label>
+      <input class="input" type="date" v-model="filters.start_date" @change="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">结束日期</label>
+      <input class="input" type="date" v-model="filters.end_date" @change="search" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="''" :empty="!items.length" :colspan="9"
+              empty-title="没有符合条件的执行记录"
+              empty-hint="任务执行过之后，这里会显示每次运行的结果。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>执行时间</th><th>归属用户</th><th>账号</th><th>触发</th><th>状态</th>
+          <th class="is-num">成功 / 总数</th><th class="is-num">耗时</th><th>说明</th>
+          <th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td class="nowrap">
+        <time-text :value="row.started_at" mode="minute"></time-text>
+        <div class="row-sub is-mono">#{{ row.id }}</div>
+      </td>
+      <td>{{ ownerText(row) }}</td>
+      <td>{{ row.account_nickname || ('账号 #' + row.account_id) }}</td>
+      <td><status-tag kind="trigger" :value="row.trigger_type" :dot="false"></status-tag></td>
+      <td>
+        <status-tag kind="run" :value="row.status"></status-tag>
+        <div class="row-sub text-danger" v-if="row.error_code">{{ row.error_code }}</div>
+      </td>
+      <td class="is-num">
+        <span class="text-success">{{ row.success_count || 0 }}</span>
+        <span class="text-muted"> / {{ row.total_count || 0 }}</span>
+        <div class="row-sub" v-if="row.fail_count">
+          <span class="text-danger">失败 {{ row.fail_count }}</span>
+        </div>
+      </td>
+      <td class="is-num">{{ fmt.duration(row.duration_ms) }}</td>
+      <td><span class="ellipsis" :title="row.message">{{ row.message || '—' }}</span></td>
+      <td class="is-actions">
+        <button class="btn btn--sm btn--soft" @click="openDetail(row)">
+          <icon name="eye" :size="13"></icon> 详情</button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<!-- 详情 -->
+<drawer v-model="showDetail" size="lg" title="执行详情"
+        :sub="detail ? ('记录 #' + (detail.id || '') + '　' + (detail.account_nickname || '')) : ''">
+  <div v-if="detailLoading"><loading text="正在加载执行详情…"></loading></div>
+  <alert type="warn" :message="detailError" v-if="detailError"></alert>
+
+  <template v-if="detail && !detailLoading">
+    <div class="flex-gap mb-12">
+      <status-tag kind="run" :value="detail.status"></status-tag>
+      <status-tag kind="trigger" :value="detail.trigger_type" :dot="false"></status-tag>
+      <span class="tag tag--muted" v-if="detail.run_date">{{ detail.run_date }}</span>
+    </div>
+
+    <div class="card">
+      <div class="card__body">
+        <div class="desc desc--wide">
+          <div class="desc__k">归属用户</div><div class="desc__v">{{ ownerText(detail) }}</div>
+          <div class="desc__k">托管账号</div>
+          <div class="desc__v">{{ detail.account_nickname || ('账号 #' + detail.account_id) }}</div>
+          <div class="desc__k">开始 / 结束</div>
+          <div class="desc__v">
+            <time-text :value="detail.started_at" mode="time"></time-text> →
+            <time-text :value="detail.finished_at" mode="time"></time-text>
+          </div>
+          <div class="desc__k">耗时</div><div class="desc__v">{{ fmt.duration(detail.duration_ms) }}</div>
+          <div class="desc__k">结果统计</div>
+          <div class="desc__v">
+            总数 {{ detail.total_count || 0 }} ·
+            <span class="text-success">成功 {{ detail.success_count || 0 }}</span> ·
+            <span :class="detail.fail_count ? 'text-danger' : 'text-muted'">失败 {{ detail.fail_count || 0 }}</span>
+          </div>
+          <div class="desc__k">说明</div><div class="desc__v">{{ detail.message || '—' }}</div>
+          <div class="desc__k">错误码</div>
+          <div class="desc__v" :class="detail.error_code ? 'text-danger' : 'text-muted'">
+            {{ detail.error_code || '—' }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">每个好友的结果</div>
+    <data-table :loading="false" :error="''" :empty="!detailItems.length" :colspan="4"
+                empty-title="没有好友明细"
+                empty-hint="可能是任务被跳过，或明细接口不允许查看其他用户的记录。">
+      <template #head>
+        <thead><tr><th>好友</th><th>状态</th><th>实际发送内容</th><th>截图 / 错误</th></tr></thead>
+      </template>
+      <tr v-for="(item, i) in detailItems" :key="item.id || i">
+        <td>{{ item.friend_name || '—' }}</td>
+        <td><status-tag kind="item" :value="item.status"></status-tag></td>
+        <td><span class="ellipsis" :title="item.message">{{ item.message || '—' }}</span></td>
+        <td>
+          <img v-if="shots[item.id || item.friend_name]" class="thumb"
+               :src="shots[item.id || item.friend_name]"
+               @click="openShot(shots[item.id || item.friend_name])" alt="执行截图" />
+          <!-- 成功行不该显示错误：error_detail 在成功行里存的是「发送方式」 -->
+          <span v-else-if="item.status !== 'success' && item.error_code" class="text-danger fs-12"
+                :title="item.error_detail">
+            {{ item.error_code }}</span>
+          <span v-else-if="item.status === 'success' && item.error_detail" class="text-muted fs-12">
+            {{ item.error_detail }}</span>
+          <span v-else class="text-muted fs-12">无截图</span>
+        </td>
+      </tr>
+    </data-table>
+  </template>
+
+  <template #foot>
+    <button class="btn" @click="showDetail = false">关闭</button>
+  </template>
+</drawer>
+
+<!-- 截图放大 -->
+<div class="overlay" v-if="showShot" @click.self="showShot = false">
+  <img class="thumb--lg" :src="shotUrl" alt="执行截图" />
+</div>

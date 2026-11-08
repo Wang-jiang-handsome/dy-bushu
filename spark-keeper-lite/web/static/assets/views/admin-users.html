@@ -1,0 +1,286 @@
+<page-head title="用户管理" :sub="'共 ' + total + ' 个用户　可管理账号、套餐、余额与登录状态'">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--primary btn--sm" @click="openCreate">
+    <icon name="plus" :size="14"></icon> 新建用户
+  </button>
+</page-head>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field toolbar__grow">
+      <label class="field__label">关键字</label>
+      <input class="input" v-model="filters.keyword" placeholder="用户名 / 昵称 / 邮箱 / 手机号"
+             @keyup.enter="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">角色</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.role" @change="search">
+          <option v-for="o in roleOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">状态</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.status" @change="search">
+          <option v-for="o in statusOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">套餐</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.package_id" @change="search">
+          <option value="">全部套餐</option>
+          <option v-for="p in packages" :key="p.id" :value="p.id">{{ p.name }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="error" :empty="!items.length" :colspan="8"
+              empty-title="没有匹配的用户"
+              empty-hint="换个关键字或清空筛选条件再试。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>用户</th><th>联系方式</th><th>角色</th><th>状态</th><th>套餐</th>
+          <th class="is-num">余额</th><th>注册时间</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td>
+        <div class="flex-center gap-6">
+          <span class="avatar">
+            <img v-if="row.avatar" :src="row.avatar" alt="" />
+            <span v-else>{{ (row.nickname || row.username || '?').slice(0, 1) }}</span>
+          </span>
+          <div style="min-width:0">
+            <div class="row-title">{{ row.nickname || row.username }}</div>
+            <div class="row-sub is-mono">#{{ row.id }} · {{ row.username }}</div>
+          </div>
+        </div>
+      </td>
+      <td>
+        <div class="fs-13">{{ row.email || '—' }}</div>
+        <div class="row-sub">{{ row.phone || '—' }}</div>
+      </td>
+      <td>
+        <span class="select-wrap" style="min-width:104px">
+          <select class="select" :value="row.role" :disabled="acting" @change="changeRole(row, $event.target.value)">
+            <option value="user">普通用户</option>
+            <option value="agent">代理</option>
+            <option value="admin">管理员</option>
+          </select>
+        </span>
+      </td>
+      <td><status-tag kind="user" :value="row.status"></status-tag></td>
+      <td>
+        <span v-if="row.package_name">{{ row.package_name }}</span>
+        <span v-else class="text-muted">未开通</span>
+        <div class="row-sub" v-if="row.package_expire_at">
+          至 <time-text :value="row.package_expire_at" mode="date"></time-text>
+        </div>
+      </td>
+      <td class="is-num"><money :cents="row.balance_cents"></money></td>
+      <td class="nowrap"><time-text :value="row.created_at" mode="date"></time-text></td>
+      <td class="is-actions">
+        <button class="btn btn--sm btn--soft" @click="openDetail(row)">
+          <icon name="eye" :size="13"></icon> 详情</button>
+        <button class="btn btn--sm btn--ghost" @click="resetPassword(row)" :disabled="acting" title="重置密码">
+          <icon name="lock" :size="13"></icon></button>
+        <button class="btn btn--sm btn--ghost" @click="grantPackage(row)" :disabled="acting" title="授权套餐">
+          <icon name="box" :size="13"></icon></button>
+        <button class="btn btn--sm btn--ghost" @click="adjustBalance(row)" :disabled="acting" title="调整余额">
+          <icon name="card" :size="13"></icon></button>
+        <button class="btn btn--sm btn--ghost" @click="toggleStatus(row)" :disabled="acting"
+                :title="row.status === 'active' ? '禁用用户' : '启用用户'">
+          <icon name="power" :size="13"></icon></button>
+        <button class="btn btn--sm btn--ghost" @click="removeUser(row)" :disabled="acting" title="删除用户">
+          <icon name="trash" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<!-- 新建用户 -->
+<modal v-model="showForm" title="新建用户" sub="创建后可直接用该密码登录">
+  <alert type="error" :message="formError" v-if="formError"></alert>
+  <div class="form-grid">
+    <field label="用户名" required hint="3-20 位字母、数字或下划线">
+      <input class="input" v-model="form.username" placeholder="例如 user001" />
+    </field>
+    <field label="初始密码" required hint="至少 8 位">
+      <input class="input" v-model="form.password" placeholder="至少 8 位" />
+    </field>
+    <field label="昵称">
+      <input class="input" v-model="form.nickname" placeholder="选填" />
+    </field>
+    <field label="邮箱">
+      <input class="input" v-model="form.email" placeholder="选填" />
+    </field>
+    <field label="手机号">
+      <input class="input" v-model="form.phone" placeholder="选填" />
+    </field>
+    <field label="角色">
+      <span class="select-wrap">
+        <select class="select" v-model="form.role">
+          <option value="user">普通用户</option>
+          <option value="agent">代理</option>
+          <option value="admin">管理员</option>
+        </select>
+      </span>
+    </field>
+  </div>
+  <template #foot>
+    <button class="btn" @click="showForm = false" :disabled="submitting">取消</button>
+    <button class="btn btn--primary" @click="saveForm" :disabled="submitting"
+            :class="{ 'is-loading': submitting }">
+      <icon name="refresh" :size="14" class="spin" v-if="submitting"></icon> 创建用户
+    </button>
+  </template>
+</modal>
+
+<!-- 用户详情 -->
+<drawer v-model="showDetail" size="lg" title="用户详情"
+        :sub="detail ? ('#' + detail.id + ' ' + (detail.nickname || detail.username)) : ''">
+  <div v-if="detailLoading"><loading text="正在加载用户详情…"></loading></div>
+  <alert type="error" :message="detailError" v-if="detailError"></alert>
+
+  <template v-if="detail && !detailLoading">
+    <div class="flex-between mb-12">
+      <div class="flex-gap">
+        <status-tag kind="role" :value="detail.role"></status-tag>
+        <status-tag kind="user" :value="detail.status"></status-tag>
+        <span class="tag tag--muted is-mono">#{{ detail.id }}</span>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn--sm" @click="resetPassword(detail)" :disabled="acting">
+          <icon name="lock" :size="13"></icon> 重置密码</button>
+        <button class="btn btn--sm" @click="grantPackage(detail)" :disabled="acting">
+          <icon name="box" :size="13"></icon> 授权套餐</button>
+        <button class="btn btn--sm" @click="adjustBalance(detail)" :disabled="acting">
+          <icon name="card" :size="13"></icon> 调余额</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__body">
+        <div class="desc desc--wide">
+          <div class="desc__k">用户名</div><div class="desc__v is-mono">{{ detail.username }}</div>
+          <div class="desc__k">昵称</div><div class="desc__v">{{ detail.nickname || '—' }}</div>
+          <div class="desc__k">邮箱</div><div class="desc__v">{{ detail.email || '—' }}</div>
+          <div class="desc__k">手机号</div><div class="desc__v">{{ detail.phone || '—' }}</div>
+          <div class="desc__k">余额</div><div class="desc__v"><money :cents="detail.balance_cents"></money></div>
+          <div class="desc__k">套餐</div>
+          <div class="desc__v">
+            {{ detail.package_name || '未开通' }}
+            <span v-if="detail.package_code" class="tag tag--muted">{{ detail.package_code }}</span>
+          </div>
+          <div class="desc__k">套餐到期</div>
+          <div class="desc__v">
+            <span v-if="detail.package_expire_at">
+              <time-text :value="detail.package_expire_at" mode="time"></time-text>
+            </span>
+            <span v-else class="text-muted">—</span>
+          </div>
+          <div class="desc__k">注册时间</div>
+          <div class="desc__v"><time-text :value="detail.created_at" mode="time"></time-text></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title mt-16">关联数据</div>
+    <div v-if="relatedLoading"><loading text="正在加载关联数据…"></loading></div>
+    <div v-else class="grid grid--3">
+      <div class="card">
+        <div class="card__head"><div class="card__title">抖音账号</div>
+          <div class="card__actions"><span class="tag tag--muted">{{ related.accounts.length }}</span></div>
+        </div>
+        <div class="card__body">
+          <empty-state v-if="!related.accounts.length" icon="smartphone" title="无账号"
+                       hint="该用户还没有托管账号。"></empty-state>
+          <div v-else class="kv-list">
+            <div class="kv-list__row" v-for="a in related.accounts" :key="a.id">
+              <div class="kv-list__v">
+                <div>{{ a.nickname || ('账号 #' + a.id) }}</div>
+                <div class="row-sub">
+                  <status-tag kind="account" :value="a.status" :dot="false"></status-tag>
+                  <span v-if="a.douyin_uid" class="is-mono"> {{ a.douyin_uid }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card__head"><div class="card__title">定时任务</div>
+          <div class="card__actions"><span class="tag tag--muted">{{ related.tasks.length }}</span></div>
+        </div>
+        <div class="card__body">
+          <empty-state v-if="!related.tasks.length" icon="clock" title="无任务"
+                       hint="该用户还没有定时任务。"></empty-state>
+          <div v-else class="kv-list">
+            <div class="kv-list__row" v-for="t in related.tasks" :key="t.id">
+              <div class="kv-list__v">
+                <div>{{ t.name || ('任务 #' + t.id) }}</div>
+                <div class="row-sub">
+                  <span class="is-mono">{{ t.time_of_day }}</span> ·
+                  <status-tag kind="repeat" :value="t.repeat_mode" :dot="false"></status-tag>
+                  <span class="tag" :class="t.enabled ? 'tag--success' : 'tag--muted'" style="margin-left:4px">
+                    {{ t.enabled ? '启用' : '停用' }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card__head"><div class="card__title">最近订单</div>
+          <div class="card__actions"><span class="tag tag--muted">{{ related.orders.length }}</span></div>
+        </div>
+        <div class="card__body">
+          <empty-state v-if="!related.orders.length" icon="cart" title="无订单"
+                       hint="该用户还没有下过单。"></empty-state>
+          <div v-else class="kv-list">
+            <div class="kv-list__row" v-for="o in related.orders" :key="o.order_no">
+              <div class="kv-list__v">
+                <div class="is-mono fs-12">{{ o.order_no }}</div>
+                <div class="row-sub">
+                  <money :cents="o.payable_cents || o.amount_cents"></money> ·
+                  <status-tag kind="order" :value="o.status" :dot="false"></status-tag>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="btn-row mt-16">
+      <button class="btn btn--sm" @click="toggleStatus(detail)" :disabled="acting">
+        <icon name="power" :size="13"></icon>
+        {{ detail.status === 'active' ? '禁用该用户' : '启用该用户' }}
+      </button>
+      <button class="btn btn--sm btn--danger" @click="removeUser(detail)" :disabled="acting">
+        <icon name="trash" :size="13"></icon> 删除该用户
+      </button>
+    </div>
+  </template>
+
+  <template #foot>
+    <button class="btn" @click="showDetail = false">关闭</button>
+  </template>
+</drawer>

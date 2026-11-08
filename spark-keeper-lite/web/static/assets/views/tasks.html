@@ -1,0 +1,186 @@
+<page-head title="定时任务"
+           sub="到点自动给好友发送火花消息。支持随机文案与随机抖动，降低规律化触发的风险。">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+  <button class="btn btn--primary btn--sm" @click="nav.go('/tasks/new')">
+    <icon name="plus" :size="14"></icon> 新建任务
+  </button>
+</page-head>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field">
+      <label class="field__label">账号</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.account_id" @change="search">
+          <option value="">全部账号</option>
+          <option v-for="a in accounts" :key="a.id" :value="a.id">
+            {{ a.nickname || a.remark || ('账号 #' + a.id) }}
+          </option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">状态</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.enabled" @change="search">
+          <option v-for="o in enabledOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="toolbar__spacer"></div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="error" :empty="!items.length" :colspan="7"
+              empty-title="还没有定时任务"
+              empty-hint="创建任务后，系统会在设定的时间自动给好友发送火花消息。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>任务</th><th>托管账号</th><th>执行计划</th><th>好友范围</th>
+          <th>最近执行</th><th>下次执行</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <template #empty-action>
+      <button class="btn btn--primary btn--sm" @click="nav.go('/tasks/new')">
+        <icon name="plus" :size="13"></icon> 新建任务
+      </button>
+    </template>
+    <tr v-for="row in items" :key="row.id">
+      <td>
+        <a class="row-title" :href="'#/tasks/' + row.id">{{ row.name || ('任务 #' + row.id) }}</a>
+        <div class="row-sub">
+          <status-tag kind="taskType" :value="row.task_type || 'spark'" :dot="false"></status-tag>
+          <span class="tag" :class="row.enabled ? 'tag--success' : 'tag--muted'" style="margin-left:4px">
+            {{ row.enabled ? '已启用' : '已停用' }}</span>
+        </div>
+      </td>
+      <td>{{ row.account_nickname || accountName(row.account_id) }}</td>
+      <td>
+        <div class="nowrap">
+          <icon name="clock" :size="13" style="vertical-align:-2px"></icon>
+          <span class="is-mono">{{ row.time_of_day || '—' }}</span>
+          <span class="text-muted"> · {{ repeatText(row) }}</span>
+        </div>
+        <div class="row-sub">
+          <span v-if="row.repeat_mode === 'custom'">{{ fmt.weekdayText(row.weekdays) }}</span>
+          <span v-if="row.jitter_seconds">抖动 ±{{ Math.round(row.jitter_seconds / 60) }} 分钟</span>
+          <span v-if="row.timezone"> · {{ row.timezone }}</span>
+        </div>
+      </td>
+      <td>
+        <status-tag kind="friendMode" :value="row.friend_mode" :dot="false"></status-tag>
+        <div class="row-sub">{{ row.friend_count === undefined ? '—' : (row.friend_count + ' 位好友') }}</div>
+      </td>
+      <td>
+        <span v-if="row.last_run_at">
+          <status-tag kind="run" :value="row.last_status || 'empty'"></status-tag>
+          <div class="row-sub"><time-text :value="row.last_run_at" mode="ago"></time-text></div>
+        </span>
+        <span v-else class="text-muted">尚未执行</span>
+      </td>
+      <td>
+        <span v-if="row.enabled && row.next_run_at">
+          <time-text :value="row.next_run_at" mode="minute"></time-text>
+          <!-- 抖动窗口必须显示出来：±5 分钟意味着「10:41 的任务」可能到 10:46 才跑，
+               不写清楚用户会以为没执行（真实投诉过「自动执行不运行」）。 -->
+          <template v-if="row.jitter_seconds">
+            <span class="text-muted fs-12"> ~ {{ jitterEnd(row) }}</span>
+          </template>
+          <div class="row-sub" v-if="row.jitter_seconds">
+            抖动窗口内随时可能触发（最晚 {{ jitterMinutes(row) }} 分钟后）
+          </div>
+          <div class="row-sub" v-else>{{ agoText(row.next_run_at) }}</div>
+        </span>
+        <span v-else class="text-muted">—</span>
+      </td>
+      <td class="is-actions">
+        <button class="btn btn--sm" @click="runNow(row)" :disabled="acting === row.id"
+                title="立即执行一次（计入每日次数）">
+          <icon name="play" :size="13"></icon> 执行</button>
+        <button class="btn btn--sm" @click="preview(row)">
+          <icon name="eye" :size="13"></icon> 预览</button>
+        <button class="btn btn--sm" @click="toggle(row)" :disabled="acting === row.id">
+          <icon name="power" :size="13"></icon> {{ row.enabled ? '停用' : '启用' }}</button>
+        <button class="btn btn--sm btn--ghost" @click="openRuns(row)" title="执行记录">
+          <icon name="list" :size="13"></icon></button>
+        <a class="btn btn--sm btn--ghost" :href="'#/tasks/' + row.id" title="编辑任务">
+          <icon name="edit" :size="13"></icon></a>
+        <button class="btn btn--sm btn--ghost" @click="remove(row)" title="删除任务">
+          <icon name="trash" :size="13"></icon></button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<!-- 预览下 5 次执行 -->
+<modal v-model="showPreview" title="执行计划预览"
+       :sub="previewTask ? (previewTask.name || ('任务 #' + previewTask.id)) : ''" size="lg">
+  <div v-if="previewLoading"><loading text="正在计算…"></loading></div>
+  <template v-else>
+    <alert type="error" :message="previewData && previewData.error" v-if="previewData && previewData.error"></alert>
+    <div class="section-title">下一次执行时间</div>
+    <div v-if="!previewTimes().length" class="text-muted fs-13">后端未返回预览时间（可能是任务已停用或账号未登录）。</div>
+    <div v-else class="kv-list">
+      <div class="kv-list__row" v-for="(t, i) in previewTimes()" :key="i">
+        <div class="kv-list__k">第 {{ i + 1 }} 次</div>
+        <div class="kv-list__v">
+          <b><time-text :value="t.time" mode="time"></time-text></b>
+          <span class="text-muted">（{{ agoText(t.time) }}）</span>
+          <div class="row-sub" v-if="t.local">按任务时区：{{ t.local }}</div>
+          <div class="row-sub" v-if="t.message">预计文案：{{ t.message }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="alert alert--warn mt-12" v-if="previewWarnings().length">
+      <icon name="alert" :size="15" style="margin-top:2px"></icon>
+      <div class="alert__body">
+        <div v-for="(w, i) in previewWarnings()" :key="i">· {{ w }}</div>
+      </div>
+    </div>
+    <div class="section-title mt-16" v-if="previewMessages().length">随机文案样本（去重）</div>
+    <div class="flex-gap" v-if="previewMessages().length">
+      <span class="tag tag--primary" v-for="(m, i) in previewMessages()" :key="i">{{ m }}</span>
+    </div>
+  </template>
+  <template #foot>
+    <button class="btn" @click="showPreview = false">关闭</button>
+  </template>
+</modal>
+
+<!-- 任务执行记录 -->
+<drawer v-model="showRuns" size="lg" title="任务执行记录"
+        :sub="runsTask ? (runsTask.name || ('任务 #' + runsTask.id)) : ''">
+  <data-table :loading="runsLoading" :error="runsError" :empty="!runs.length" :colspan="5"
+              empty-title="该任务还没有执行记录" @retry="loadRuns">
+    <template #head>
+      <thead><tr><th>开始时间</th><th>触发</th><th>状态</th><th class="is-num">成功/失败</th><th>说明</th></tr></thead>
+    </template>
+    <tr v-for="row in runs" :key="row.id">
+      <td><time-text :value="row.started_at" mode="time"></time-text></td>
+      <td><status-tag kind="trigger" :value="row.trigger_type" :dot="false"></status-tag></td>
+      <td><status-tag kind="run" :value="row.status"></status-tag></td>
+      <td class="is-num">
+        <span class="text-success">{{ row.success_count || 0 }}</span> /
+        <span :class="row.fail_count ? 'text-danger' : 'text-muted'">{{ row.fail_count || 0 }}</span>
+      </td>
+      <td><span class="ellipsis" :title="row.message">{{ row.message || '—' }}</span></td>
+    </tr>
+  </data-table>
+  <pager :page="runsPage" :pages="runsPages" :total="runsTotal" :page-size="10" :show-size="false"
+         @change="p => { runsPage = p; loadRuns(); }"></pager>
+  <template #foot>
+    <a class="btn btn--sm" href="#/records"><icon name="file" :size="13"></icon> 去执行记录看详情与截图</a>
+    <button class="btn" @click="showRuns = false">关闭</button>
+  </template>
+</drawer>

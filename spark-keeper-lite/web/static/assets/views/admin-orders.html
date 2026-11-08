@@ -1,0 +1,185 @@
+<page-head title="订单管理" :sub="'共 ' + total + ' 笔订单　人工收款到账后可点「确认收款」补单'">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div class="grid grid--4 mb-16">
+  <stat-card label="订单总数" icon="cart" :value="total"></stat-card>
+  <stat-card label="累计收入" icon="trend" tone="success"
+             :value="money((summary && summary.revenue_cents) || 0)"
+             hint="已支付订单合计"></stat-card>
+  <stat-card label="本页已支付金额" icon="card" tone="info" :value="money(pageRevenue)"
+             hint="仅统计当前页"></stat-card>
+  <stat-card label="筛选结果" icon="filter" :value="total" hint="共匹配到这么多订单"></stat-card>
+</div>
+
+<div class="card">
+  <div class="toolbar">
+    <div class="field">
+      <label class="field__label">状态</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.status" @change="search">
+          <option v-for="o in statusOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field">
+      <label class="field__label">渠道</label>
+      <span class="select-wrap">
+        <select class="select" v-model="filters.channel" @change="search">
+          <option v-for="o in channelOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </span>
+    </div>
+    <div class="field toolbar__grow">
+      <label class="field__label">关键字</label>
+      <input class="input" v-model="filters.keyword" placeholder="订单号 / 用户名 / 套餐名"
+             @keyup.enter="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">开始日期</label>
+      <input class="input" type="date" v-model="filters.start_date" @change="search" />
+    </div>
+    <div class="field">
+      <label class="field__label">结束日期</label>
+      <input class="input" type="date" v-model="filters.end_date" @change="search" />
+    </div>
+    <div class="toolbar__actions">
+      <button class="btn btn--sm" @click="search"><icon name="search" :size="13"></icon> 查询</button>
+      <button class="btn btn--sm btn--ghost" @click="reset">重置</button>
+    </div>
+  </div>
+
+  <data-table :loading="loading" :error="''" :empty="!items.length" :colspan="8"
+              empty-title="没有符合条件的订单"
+              empty-hint="换个筛选条件，或等用户下单后再来看。"
+              @retry="load">
+    <template #head>
+      <thead>
+        <tr>
+          <th>订单号</th><th>用户</th><th>套餐 / 主题</th><th class="is-num">金额</th>
+          <th>渠道</th><th>状态</th><th>创建时间</th><th class="is-actions">操作</th>
+        </tr>
+      </thead>
+    </template>
+    <tr v-for="row in items" :key="row.order_no">
+      <td class="is-mono">
+        {{ row.order_no }}
+        <copy-button :text="row.order_no" icon-only></copy-button>
+        <div class="row-sub" v-if="row.trade_no">交易号 {{ row.trade_no }}</div>
+      </td>
+      <td>
+        <span v-if="row.username">{{ row.username }}</span>
+        <span v-else-if="row.user_id" class="text-muted">用户 #{{ row.user_id }}</span>
+        <span v-else class="text-muted">—</span>
+        <div class="row-sub" v-if="row.nickname">{{ row.nickname }}</div>
+      </td>
+      <td><span class="ellipsis" :title="row.subject">{{ row.subject || '—' }}</span></td>
+      <td class="is-num"><money :cents="amountOf(row)" strong></money></td>
+      <td><status-tag kind="channel" :value="row.channel" :dot="false"></status-tag></td>
+      <td>
+        <status-tag kind="order" :value="row.status"></status-tag>
+        <div class="row-sub" v-if="row.paid_at">
+          <time-text :value="row.paid_at" mode="minute"></time-text>
+        </div>
+      </td>
+      <td class="nowrap"><time-text :value="row.created_at" mode="minute"></time-text></td>
+      <td class="is-actions">
+        <button class="btn btn--sm btn--soft" @click="openDetail(row)">
+          <icon name="eye" :size="13"></icon> 详情</button>
+        <button class="btn btn--sm btn--primary" v-if="row.status === 'pending'"
+                @click="confirmPaid(row)" :disabled="acting">
+          <icon name="check" :size="13"></icon> 确认收款</button>
+        <button class="btn btn--sm" v-if="row.status === 'paid'" @click="refund(row)" :disabled="acting">
+          <icon name="refresh" :size="13"></icon> 标记退款</button>
+      </td>
+    </tr>
+  </data-table>
+
+  <pager :page="page" :pages="pages" :total="total" :page-size="pageSize"
+         @change="p => { page = p; load(); }" @size="s => { pageSize = s; page = 1; load(); }"></pager>
+</div>
+
+<div class="card">
+  <div class="card__head"><div class="card__title">操作说明</div></div>
+  <div class="card__body fs-13 text-2">
+    <p>· <b>确认收款</b>：用于人工收款（`manual` 渠道）或支付回调丢失时的补单，会写入资金流水并开通套餐。</p>
+    <p>· <b>标记退款</b>：只在系统内记录退款状态，<b>不会</b>自动调用支付通道退款，请先在支付平台完成实际退款。</p>
+    <p class="mb-0">· 所有人工操作都会写入审计日志（可在「运行与审计日志」里查到操作人和备注）。</p>
+  </div>
+</div>
+
+<!-- 订单详情 -->
+<drawer v-model="showDetail" title="订单详情" :sub="detail ? (detail.order_no || '') : ''">
+  <div v-if="detailLoading"><loading text="正在加载订单…"></loading></div>
+  <alert type="error" :message="detailError" v-if="detailError"></alert>
+
+  <template v-if="detail">
+    <div class="flex-between mb-12">
+      <status-tag kind="order" :value="detail.status"></status-tag>
+      <div class="btn-row">
+        <button class="btn btn--sm btn--primary" v-if="detail.status === 'pending'"
+                @click="confirmPaid(detail)" :disabled="acting">
+          <icon name="check" :size="13"></icon> 确认收款
+        </button>
+        <button class="btn btn--sm" v-if="detail.status === 'paid'" @click="refund(detail)" :disabled="acting">
+          <icon name="refresh" :size="13"></icon> 标记退款
+        </button>
+      </div>
+    </div>
+
+    <div class="desc desc--wide">
+      <div class="desc__k">订单号</div>
+      <div class="desc__v">
+        <span class="is-mono">{{ detail.order_no }}</span>
+        <copy-button :text="detail.order_no" label="复制"></copy-button>
+      </div>
+      <div class="desc__k">用户</div>
+      <div class="desc__v">
+        {{ detail.username || detail.nickname || ('用户 #' + (detail.user_id || '—')) }}
+      </div>
+      <div class="desc__k">套餐 / 主题</div>
+      <div class="desc__v">{{ detail.subject || '—' }}</div>
+      <div class="desc__k">订单金额</div>
+      <div class="desc__v"><money :cents="detail.amount_cents"></money></div>
+      <div class="desc__k">应付金额</div>
+      <div class="desc__v"><money :cents="detail.payable_cents"></money></div>
+      <div class="desc__k">渠道</div>
+      <div class="desc__v"><status-tag kind="channel" :value="detail.channel"></status-tag></div>
+      <div class="desc__k">第三方交易号</div>
+      <div class="desc__v is-mono">{{ detail.trade_no || '—' }}</div>
+      <div class="desc__k">创建时间</div>
+      <div class="desc__v"><time-text :value="detail.created_at" mode="time"></time-text></div>
+      <div class="desc__k">支付时间</div>
+      <div class="desc__v">
+        <span v-if="detail.paid_at"><time-text :value="detail.paid_at" mode="time"></time-text></span>
+        <span v-else class="text-muted">未支付</span>
+      </div>
+      <div class="desc__k">过期时间</div>
+      <div class="desc__v">
+        <span v-if="detail.expire_at"><time-text :value="detail.expire_at" mode="time"></time-text></span>
+        <span v-else class="text-muted">—</span>
+      </div>
+      <div class="desc__k">回调次数</div>
+      <div class="desc__v">{{ detail.notify_count || 0 }}</div>
+      <div class="desc__k">备注</div>
+      <div class="desc__v">{{ detail.remark || '—' }}</div>
+      <div class="desc__k">收银台</div>
+      <div class="desc__v">
+        <a v-if="detail.pay_url" :href="detail.pay_url" target="_blank" rel="noopener">
+          {{ detail.pay_url }}</a>
+        <span v-else class="text-muted">—</span>
+      </div>
+    </div>
+  </template>
+
+  <template #foot>
+    <button class="btn" @click="showDetail = false">关闭</button>
+  </template>
+</drawer>

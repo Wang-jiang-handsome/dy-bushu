@@ -1,0 +1,213 @@
+<page-head title="仪表盘"
+           :sub="'欢迎回来，' + (user.nickname || user.username || '') + '　当前套餐：' + (quotaInfo.active ? (quotaInfo.package_name || '已开通') : '未开通')">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 刷新数据
+  </button>
+  <button class="btn btn--primary btn--sm" @click="nav.go('/tasks/new')">
+    <icon name="plus" :size="14"></icon> 新建定时任务
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<!-- 套餐未开通提醒 -->
+<div class="alert alert--warn" v-if="!loading && data && !quotaInfo.active">
+  <icon name="alert" :size="16" style="margin-top:2px"></icon>
+  <div class="alert__body">
+    当前账号还没有生效中的套餐，无法新增托管账号与执行任务。可以
+    <a href="#/card">用卡密兑换</a> 或 <a href="#/packages">购买套餐</a>。
+  </div>
+</div>
+
+<!-- 统计卡 -->
+<div class="grid grid--4 mb-16">
+  <stat-card label="托管账号" icon="smartphone" tone="info"
+             :value="accounts.total || 0"
+             :hint="'在线 ' + (accounts.online || 0) + ' · 失效 ' + (accounts.expired || 0)"></stat-card>
+  <stat-card label="定时任务" icon="clock"
+             :value="tasks.total || 0"
+             :hint="'已启用 ' + (tasks.enabled || 0) + ' 个'"></stat-card>
+  <stat-card label="今日执行" icon="zap" :tone="today.failed ? 'warn' : 'success'"
+             :value="(today.runs || 0)"
+             :hint="'成功 ' + (today.success || 0) + ' · 失败 ' + (today.failed || 0)"></stat-card>
+  <stat-card label="今日触达好友" icon="send" tone="success"
+             :value="(today.friends || today.sent || 0)"
+             :hint="'共发出 ' + (today.sent || 0) + ' 条消息'"></stat-card>
+</div>
+
+<div class="grid grid--sidebar">
+  <div>
+    <!-- 7 天趋势 -->
+    <div class="card">
+      <div class="card__head">
+        <div>
+          <div class="card__title">近 7 天执行趋势</div>
+          <div class="card__sub">按天统计成功与失败次数</div>
+        </div>
+        <div class="card__actions legend">
+          <span class="legend__key"><i class="legend__dot"></i> 成功</span>
+          <span class="legend__key"><i class="legend__dot legend__dot--fail"></i> 失败</span>
+        </div>
+      </div>
+      <div class="card__body">
+        <div v-if="loading" class="skeleton skeleton--block"></div>
+        <div v-else-if="!trend.length" class="empty">
+          <div class="empty__icon"><icon name="chart" :size="20"></icon></div>
+          <div class="empty__title">暂无执行数据</div>
+          <div class="empty__hint">创建定时任务后，这里会显示最近 7 天的执行情况。</div>
+        </div>
+        <div v-else class="bars">
+          <div class="bars__col" v-for="row in trend" :key="row.date"
+               :title="row.date + '：成功 ' + (row.success||0) + ' 次，失败 ' + (row.failed||0) + ' 次'">
+            <div class="bars__stack">
+              <div class="bars__bar bars__bar--fail" :style="{ height: barHeight(row, 'failed') }"
+                   v-if="row.failed"></div>
+              <div class="bars__bar" :style="{ height: barHeight(row, 'success') }"
+                   v-if="row.success"></div>
+            </div>
+            <div class="bars__label">{{ (row.date || '').slice(5) }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 最近执行 -->
+    <div class="card">
+      <div class="card__head">
+        <div class="card__title">最近执行记录</div>
+        <div class="card__actions">
+          <a class="link-btn" href="#/records">查看全部</a>
+        </div>
+      </div>
+      <data-table :loading="loading" :error="''" :empty="!recent.length" :colspan="5"
+                  empty-title="还没有执行记录"
+                  empty-hint="给账号创建定时任务后，每次执行都会在这里留痕。">
+        <template #head>
+          <thead>
+            <tr>
+              <th>账号</th><th>状态</th><th class="is-num">成功</th>
+              <th class="is-num">失败</th><th>开始时间</th>
+            </tr>
+          </thead>
+        </template>
+        <template #empty-action>
+          <button class="btn btn--primary btn--sm" @click="nav.go('/tasks/new')">
+            <icon name="plus" :size="13"></icon> 新建定时任务
+          </button>
+        </template>
+        <tr v-for="row in recent" :key="row.id">
+          <td><span class="row-title">{{ row.account_nickname || ('账号 #' + row.account_id) }}</span></td>
+          <td><status-tag kind="run" :value="row.status"></status-tag></td>
+          <td class="is-num text-success">{{ row.success_count || 0 }}</td>
+          <td class="is-num" :class="row.fail_count ? 'text-danger' : 'text-muted'">{{ row.fail_count || 0 }}</td>
+          <td><time-text :value="row.started_at" mode="minute"></time-text></td>
+        </tr>
+      </data-table>
+    </div>
+  </div>
+
+  <div>
+    <!-- 配额 -->
+    <div class="card">
+      <div class="card__head"><div class="card__title">我的配额</div>
+        <div class="card__actions">
+          <span class="tag" :class="quotaInfo.active ? 'tag--success' : 'tag--warn'">
+            {{ quotaInfo.active ? (quotaInfo.package_name || '已开通') : '未开通' }}
+          </span>
+        </div>
+      </div>
+      <div class="card__body">
+        <div class="mb-12">
+          <div class="flex-between fs-13">
+            <span class="text-2">托管账号</span>
+            <span><b>{{ quotaInfo.account_used || 0 }}</b> / {{ quotaInfo.account_limit || 0 }}</span>
+          </div>
+          <div class="progress mt-8">
+            <div class="progress__bar" :class="{ 'progress__bar--warn': accountPct >= 80 }"
+                 :style="{ width: accountPct + '%' }"></div>
+          </div>
+        </div>
+        <div class="mb-12">
+          <div class="flex-between fs-13">
+            <span class="text-2">今日执行次数</span>
+            <span><b>{{ quotaInfo.daily_task_used || 0 }}</b> / {{ quotaInfo.daily_task_unlimited ? '∞' : (quotaInfo.daily_task_limit || 0) }}</span>
+          </div>
+          <div class="progress mt-8">
+            <div class="progress__bar" :class="{ 'progress__bar--warn': taskPct >= 80 }"
+                 :style="{ width: taskPct + '%' }"></div>
+          </div>
+          <div class="fs-12 text-muted" style="margin-top:4px" v-if="quotaInfo.bonus_task_count">
+            含赠送额度 {{ quotaInfo.bonus_task_count }} 次
+            <span v-if="quotaInfo.bonus_expire_at">
+              （至 <time-text :value="quotaInfo.bonus_expire_at" mode="date"></time-text>）
+            </span>
+          </div>
+        </div>
+        <div class="kv-list">
+          <div class="kv-list__row">
+            <div class="kv-list__k">套餐到期</div>
+            <div class="kv-list__v">
+              <span v-if="quotaInfo.expire_at">
+                <time-text :value="quotaInfo.expire_at" mode="date"></time-text>
+                <span class="text-muted">（{{ quotaInfo.expire_text || '—' }}）</span>
+              </span>
+              <span v-else class="text-muted">—</span>
+            </div>
+          </div>
+          <div class="kv-list__row">
+            <div class="kv-list__k">今日成功率</div>
+            <div class="kv-list__v">{{ successRate }}%</div>
+          </div>
+          <div class="kv-list__row">
+            <div class="kv-list__k">下次执行</div>
+            <div class="kv-list__v">
+              <span v-if="tasks.next_run_at">
+                <time-text :value="tasks.next_run_at" mode="minute"></time-text>
+                <span class="text-muted">（{{ agoText(tasks.next_run_at) }}）</span>
+              </span>
+              <span v-else class="text-muted">暂无计划</span>
+            </div>
+          </div>
+          <div class="kv-list__row">
+            <div class="kv-list__k">账户余额</div>
+            <div class="kv-list__v">{{ money(user.balance_cents) }}</div>
+          </div>
+        </div>
+        <div class="btn-row mt-12">
+          <button class="btn btn--soft btn--sm" @click="nav.go('/packages')">
+            <icon name="box" :size="13"></icon> 套餐与续费</button>
+          <button class="btn btn--sm" @click="nav.go('/card')">
+            <icon name="key" :size="13"></icon> 卡密兑换</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 快捷入口 -->
+    <div class="card">
+      <div class="card__head"><div class="card__title">快捷操作</div></div>
+      <div class="card__body">
+        <div class="btn-row">
+          <button class="btn btn--sm btn--block" @click="nav.go('/accounts')">
+            <icon name="smartphone" :size="14"></icon> 管理抖音账号</button>
+          <button class="btn btn--sm btn--block" @click="nav.go('/friends')">
+            <icon name="users" :size="14"></icon> 好友管理</button>
+          <button class="btn btn--sm btn--block" @click="nav.go('/records')">
+            <icon name="file" :size="14"></icon> 执行记录</button>
+          <button class="btn btn--sm btn--block" @click="nav.go('/notifications')">
+            <icon name="bell" :size="14"></icon> 站内通知
+            <span class="tag tag--danger" v-if="unread">{{ unread }}</span></button>
+        </div>
+        <div class="alert alert--info mt-12 mb-0" v-if="tasks.next_run_at">
+          <icon name="clock" :size="15" style="margin-top:2px"></icon>
+          <div class="alert__body">
+            下一次自动续火花：<b><time-text :value="tasks.next_run_at" mode="minute"></time-text></b>
+            （{{ agoText(tasks.next_run_at) }}）
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

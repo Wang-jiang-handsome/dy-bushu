@@ -1,0 +1,114 @@
+<page-head title="站点配置"
+           :sub="'共 ' + items.length + ' 项配置　' + (dirtyCount ? ('有 ' + dirtyCount + ' 项未保存') : '所有修改已保存')">
+  <button class="btn btn--sm" @click="load" :disabled="loading">
+    <icon name="refresh" :size="14" :class="{ spin: loading }"></icon> 重新加载
+  </button>
+  <button class="btn btn--sm" @click="revert" :disabled="!dirtyCount || saving">放弃修改</button>
+  <button class="btn btn--primary btn--sm" @click="save" :disabled="!dirtyCount || saving"
+          :class="{ 'is-loading': saving }">
+    <icon name="refresh" :size="14" class="spin" v-if="saving"></icon>
+    <icon name="check" :size="14" v-else></icon>
+    保存{{ dirtyCount ? '（' + dirtyCount + '）' : '' }}
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+<alert type="error" :message="saveError" v-if="saveError"></alert>
+
+<div class="alert alert--warn" v-if="dirtyCount">
+  <icon name="alert" :size="16" style="margin-top:2px"></icon>
+  <div class="alert__body">
+    有 {{ dirtyCount }} 项配置已修改但尚未保存，离开页面会丢失。
+    <button class="link-btn" style="margin-left:6px" @click="save">立即保存</button>
+  </div>
+</div>
+
+<div v-if="loading" class="card"><div class="card__body"><div class="skeleton skeleton--block"></div></div></div>
+
+<empty-state v-else-if="!items.length" icon="sliders" title="没有可配置项"
+             hint="站点配置表为空，通常是数据库未初始化。可执行 python main.py init 后再回来。"></empty-state>
+
+<template v-else>
+  <div class="card" v-for="group in grouped" :key="group.name">
+    <div class="card__head">
+      <div>
+        <div class="card__title">{{ group.label }}</div>
+        <div class="card__sub">{{ group.name }} · 共 {{ group.items.length }} 项</div>
+      </div>
+      <div class="card__actions">
+        <span class="tag tag--warn" v-if="group.items.some(changed)">
+          {{ group.items.filter(changed).length }} 项待保存</span>
+      </div>
+    </div>
+    <div class="card__body">
+      <div class="form-grid form-grid--1">
+        <div class="field" v-for="item in group.items" :key="item.key">
+          <label class="field__label">
+            {{ item.description || item.key }}
+            <span class="tag tag--primary" v-if="changed(item)" style="margin-left:6px">已修改</span>
+            <span class="tag" :class="item.is_public ? 'tag--info' : 'tag--muted'" style="margin-left:4px">
+              {{ item.is_public ? '公开' : '私有' }}</span>
+            <span class="tag tag--muted" style="margin-left:4px" v-if="item.masked">敏感</span>
+          </label>
+
+          <!-- 布尔开关 -->
+          <label class="switch" v-if="isBool(item)">
+            <input type="checkbox" :checked="String(values[item.key]) === '1'"
+                   @change="toggleBool(item)" />
+            <span class="switch__track"></span>
+            <span>{{ String(values[item.key]) === '1' ? '已开启' : '已关闭' }}</span>
+          </label>
+
+          <!-- 长文本 -->
+          <textarea class="textarea" v-else-if="isLongText(item)" rows="3"
+                    v-model="values[item.key]" @input="onInput(item)"></textarea>
+
+          <!-- 敏感值：掩码显示，留空表示不修改 -->
+          <input class="input is-mono" v-else-if="item.masked" type="password"
+                 v-model="values[item.key]" @input="onInput(item)"
+                 placeholder="已配置（留空表示不修改）" autocomplete="new-password" />
+
+          <!-- 数字 / 普通文本 -->
+          <input class="input" v-else :class="{ 'is-mono': isNumber(item) || /\.(key|url|path)$/.test(item.key) }"
+                 v-model="values[item.key]" @input="onInput(item)" />
+
+          <div class="field__hint">
+            <span class="is-mono">{{ item.key }}</span>
+            <span v-if="item.updated_at"> · 更新于 <time-text :value="item.updated_at" mode="minute"></time-text></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__body">
+      <div class="flex-between">
+        <span class="fs-13 text-2">
+          {{ dirtyCount ? ('有 ' + dirtyCount + ' 项修改待保存') : '当前没有未保存的修改' }}
+        </span>
+        <div class="btn-row">
+          <button class="btn" @click="revert" :disabled="!dirtyCount || saving">放弃修改</button>
+          <button class="btn btn--primary" @click="save" :disabled="!dirtyCount || saving"
+                  :class="{ 'is-loading': saving }">
+            <icon name="refresh" :size="14" class="spin" v-if="saving"></icon>
+            保存全部修改
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card__head"><div class="card__title">配置说明</div></div>
+    <div class="card__body fs-13 text-2">
+      <p>· <b>公开</b>的配置项会对未登录访客可见（用于前端展示站名、备案、支付开关等），请勿把密钥设为公开。</p>
+      <p>· <b>敏感</b>项的当前值不会返回给浏览器，留空即表示保留原值；只有确实要更换时才填写。</p>
+      <p>· 修改「是否开放注册」「是否启用在线支付」会立即影响用户端页面（前端会重新拉取公开配置）。</p>
+      <p class="mb-0">· 邮件/短信密钥建议优先通过环境变量（<code>.env</code>）注入，避免写进数据库被备份带出。</p>
+    </div>
+  </div>
+</template>

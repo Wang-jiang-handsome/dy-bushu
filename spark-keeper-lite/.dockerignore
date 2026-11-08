@@ -1,0 +1,35 @@
+# 构建上下文排除项：交付目录根放这个文件（cp deploy/.dockerignore .）
+# 目标：镜像里不带运行产物、缓存与本机私密文件
+
+# 运行产物（数据只应该通过卷进来）
+data/
+*.db
+*.db-wal
+*.db-shm
+data/INITIAL_ADMIN.txt
+secret.key
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 版本控制与编辑器
+.git/
+.gitignore
+.idea/
+.vscode/
+*.swp
+
+# 本机私密配置（.env.example 要留，.env 绝不能进镜像）
+.env
+.env.local
+
+# 文档与开发工具（要保留 tools/ 与 tests/：部署机上可自检）
+*.md.bak
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/

@@ -1,0 +1,154 @@
+<!--
+  App 外壳（侧边栏 + 顶栏 + 内容区）。
+  layoutMode === 'auth' 时只渲染登录/注册区的居中卡片，不显示侧边栏。
+-->
+<div class="layout" v-if="layoutMode === 'app'">
+
+  <!-- 移动端侧边栏遮罩 -->
+  <button class="sidebar-backdrop only-sm" v-if="store.sidebarOpen" @click="closeSidebar"
+          aria-label="关闭菜单"></button>
+
+  <aside class="sidebar" :class="{ 'is-open': store.sidebarOpen }">
+    <div class="sidebar__brand">
+      <div class="sidebar__logo">
+        <img v-if="store.siteValue('site.logo', '') && !logoFailed"
+             :src="store.siteValue('site.logo', '')" alt="" @error="logoFailed = true"
+             style="width:100%;height:100%;object-fit:contain;border-radius:9px" />
+        <span v-else>火</span>
+      </div>
+      <div style="min-width:0">
+        <div class="sidebar__title">{{ siteName }}</div>
+        <div class="sidebar__sub">v{{ appVersion }}</div>
+      </div>
+      <button class="icon-btn sidebar__close" style="margin-left:auto" @click="closeSidebar" title="关闭菜单">
+        <icon name="x" :size="16"></icon>
+      </button>
+    </div>
+
+    <nav class="sidebar__nav">
+      <div class="nav-group" v-for="group in navGroups" :key="group.group">
+        <div class="nav-group__label">{{ group.group }}</div>
+        <a class="nav-item" v-for="item in group.items" :key="item.path"
+           :href="'#' + item.path" :class="{ 'is-active': isActive(item) }">
+          <icon :name="item.icon" :size="16"></icon>
+          <span>{{ item.label }}</span>
+          <span class="nav-item__badge" v-if="item.path === '/notifications' && unread">{{ unread > 99 ? '99+' : unread }}</span>
+        </a>
+      </div>
+
+      <div class="nav-group" v-if="isAdmin">
+        <div class="nav-group__label">管理端</div>
+        <template v-for="group in adminGroups" :key="'a-' + group.group">
+          <a class="nav-item" v-for="item in group.items" :key="item.path"
+             :href="'#' + item.path" :class="{ 'is-active': isActive(item) }">
+            <icon :name="item.icon" :size="16"></icon>
+            <span>{{ item.label }}</span>
+          </a>
+        </template>
+      </div>
+    </nav>
+
+    <div class="sidebar__foot">
+      <div v-if="store.siteValue('site.icp', '')">{{ store.siteValue('site.icp', '') }}</div>
+      <div v-if="store.siteValue('site.customer_service', '')">
+        客服：{{ store.siteValue('site.customer_service', '') }}
+      </div>
+      <div v-if="!store.siteValue('site.icp', '') && !store.siteValue('site.customer_service', '')">
+        spark-keeper 自托管版
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="topbar__icon-btn only-sm" @click="toggleSidebar" title="菜单">
+        <icon name="menu" :size="18"></icon>
+      </button>
+      <div>
+        <div class="topbar__title">{{ route.def ? route.def.title : '' }}</div>
+        <div class="topbar__crumb">{{ siteName }}</div>
+      </div>
+      <div class="topbar__spacer"></div>
+
+      <!-- 配额速览（账号数 / 今日执行） -->
+      <div class="hide-sm" style="display:flex;align-items:center;gap:10px;min-width:190px"
+           :title="'套餐：' + (quota.package_name || '未开通') + '　到期：' + (quota.expire_text || '—')">
+        <div style="flex:1 1 auto;min-width:0">
+          <div class="fs-12 text-muted nowrap">
+            账号 {{ quota.account_used }}/{{ quota.account_limit }}
+            <span class="tag" :class="quota.active ? 'tag--success' : 'tag--warn'" style="margin-left:4px">
+              {{ quota.active ? (quota.package_name || '已开通') : '未开通套餐' }}
+            </span>
+          </div>
+          <div class="progress mt-8" style="margin-top:4px">
+            <div class="progress__bar" :class="{ 'progress__bar--warn': quotaPct >= 80 }"
+                 :style="{ width: quotaPct + '%' }"></div>
+          </div>
+          <div class="fs-12 text-muted nowrap" style="margin-top:2px">
+            今日 {{ quota.daily_task_used }}/{{ quota.daily_task_unlimited ? '∞' : quota.daily_task_limit }} 次
+          </div>
+        </div>
+      </div>
+
+      <button class="topbar__icon-btn" @click="toggleTheme"
+              :title="store.theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'">
+        <icon :name="store.theme === 'dark' ? 'sun' : 'moon'" :size="17"></icon>
+      </button>
+
+      <a class="topbar__icon-btn" href="#/notifications" title="站内通知">
+        <icon name="bell" :size="17"></icon>
+        <span class="topbar__dot" v-if="unread">{{ unread > 99 ? '99+' : unread }}</span>
+      </a>
+
+      <!-- 用户菜单：用「全局点击关闭」（见 app.js 的 document 点击监听）而不是透明遮罩。
+           曾经用一个 position:fixed;z-index:50 的透明遮罩来「点空白关闭」，但它盖在
+           sticky 顶栏之上（顶栏是层叠上下文），导致点「退出登录」实际点到遮罩、
+           只关掉菜单 —— 用户表现为「点了退出没反应」。用全局点击关闭没有层级问题。 -->
+      <div style="position:relative" class="user-menu-wrap">
+        <button class="user-chip" @click="userMenuOpen = !userMenuOpen">
+          <span class="avatar">
+            <img v-if="user.avatar" :src="user.avatar" alt="" />
+            <span v-else>{{ (user.nickname || user.username || '?').slice(0, 1) }}</span>
+          </span>
+          <span class="hide-sm">{{ user.nickname || user.username }}</span>
+          <icon name="chevronDown" :size="14"></icon>
+        </button>
+        <div class="menu" v-if="userMenuOpen">
+          <div style="padding:8px 10px 6px">
+            <div style="font-weight:600">{{ user.nickname || user.username }}</div>
+            <div class="fs-12 text-muted">{{ statusText('role', user.role) }}
+              <span v-if="user.email"> · {{ user.email }}</span></div>
+            <div class="fs-12 text-muted" v-if="quota.expire_text">套餐：{{ quota.expire_text }}</div>
+          </div>
+          <div class="menu__sep"></div>
+          <button class="menu__item" @click="userMenuOpen = false; nav.go('/dashboard')">
+            <icon name="dashboard" :size="15"></icon> 仪表盘</button>
+          <button class="menu__item" @click="userMenuOpen = false; nav.go('/settings')">
+            <icon name="settings" :size="15"></icon> 个人设置</button>
+          <button class="menu__item" @click="userMenuOpen = false; nav.go('/orders')">
+            <icon name="cart" :size="15"></icon> 我的订单</button>
+          <button class="menu__item" v-if="isAdmin" @click="userMenuOpen = false; nav.go('/admin')">
+            <icon name="shield" :size="15"></icon> 管理后台</button>
+          <div class="menu__sep"></div>
+          <button class="menu__item is-danger" @click="logout">
+            <icon name="logout" :size="15"></icon> 退出登录</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1">
+      <alert type="warn" v-if="store.demoMode" closable
+             message="当前为演示模式（DEMO_MODE=1）：定时任务不会真正启动浏览器，仅做流程演示。"
+             style="margin:16px 22px 0"></alert>
+      <router-view></router-view>
+    </main>
+  </div>
+</div>
+
+<!-- 未登录区（登录/注册/找回密码） -->
+<div class="auth-layout" v-else>
+  <router-view></router-view>
+</div>
+
+<toast-host></toast-host>
+<confirm-dialog></confirm-dialog>

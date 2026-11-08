@@ -1,0 +1,70 @@
+<div class="auth-single">
+  <form class="auth-form" @submit.prevent="step === 1 ? requestCode() : submit()">
+    <div>
+      <div class="auth-form__title">找回密码</div>
+      <div class="auth-form__sub">
+        输入注册时使用的用户名 / 邮箱 / 手机号，我们会发送验证码用于重置密码。
+      </div>
+    </div>
+
+    <div class="steps">
+      <span class="steps__item" :class="step >= 1 ? 'is-active' : ''">
+        <icon name="check" :size="12" v-if="step > 1"></icon> 1. 验证身份
+      </span>
+      <span class="steps__item" :class="step === 2 ? 'is-active' : ''">2. 重置密码</span>
+    </div>
+
+    <alert type="error" :message="error" v-if="error"></alert>
+    <alert type="success" message="密码重置成功，正在跳转登录页…" v-if="done"></alert>
+    <alert type="info" v-if="devCode" :message="'未配置邮件通道，本地验证码：' + devCode"></alert>
+
+    <template v-if="step === 1">
+      <div class="field">
+        <label class="field__label">账号 <span class="req">*</span></label>
+        <input class="input" v-model="identifier" placeholder="用户名 / 邮箱 / 手机号" />
+      </div>
+      <button class="btn btn--primary btn--lg btn--block" type="submit"
+              :disabled="sending" :class="{ 'is-loading': sending }">
+        <icon name="refresh" :size="15" class="spin" v-if="sending"></icon>
+        <icon name="mail" :size="15" v-else></icon>
+        {{ sending ? '发送中…' : '发送验证码' }}
+      </button>
+    </template>
+
+    <template v-else>
+      <div class="field">
+        <label class="field__label">验证码 <span class="req">*</span></label>
+        <div class="input-affix">
+          <input class="input" v-model="code" placeholder="6 位数字验证码" />
+          <button type="button" class="input-affix__btn" :disabled="sending || countdown > 0"
+                  @click="requestCode">
+            {{ countdown > 0 ? countdown + ' 秒后重发' : '重新发送' }}
+          </button>
+        </div>
+        <div class="field__hint" v-if="maskedTarget">验证码已发送至 {{ maskedTarget }}</div>
+      </div>
+      <div class="field">
+        <label class="field__label">新密码 <span class="req">*</span></label>
+        <input class="input" type="password" v-model="password" autocomplete="new-password"
+               placeholder="至少 8 位" />
+      </div>
+      <div class="field">
+        <label class="field__label">确认新密码 <span class="req">*</span></label>
+        <input class="input" type="password" v-model="confirm" autocomplete="new-password"
+               placeholder="再输入一次新密码" />
+      </div>
+      <button class="btn btn--primary btn--lg btn--block" type="submit"
+              :disabled="submitting || done" :class="{ 'is-loading': submitting }">
+        <icon name="refresh" :size="15" class="spin" v-if="submitting"></icon>
+        <icon name="lock" :size="15" v-else></icon>
+        {{ submitting ? '提交中…' : '重置密码' }}
+      </button>
+    </template>
+
+    <div class="auth-form__foot">
+      <a href="#/login">返回登录</a>
+      <span class="text-muted">·</span>
+      <a href="#/register">注册新账号</a>
+    </div>
+  </form>
+</div>

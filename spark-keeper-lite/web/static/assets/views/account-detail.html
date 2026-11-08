@@ -1,0 +1,165 @@
+<page-head :title="(account && (account.nickname || account.remark)) || '账号详情'"
+           :sub="account ? ('账号 #' + account.id + '　创建于 ' + dateText(account.created_at)) : ''">
+  <a class="btn btn--sm" href="#/accounts"><icon name="chevronLeft" :size="14"></icon> 返回列表</a>
+  <button class="btn btn--sm" @click="check" :disabled="checking || loading">
+    <icon name="shield" :size="14"></icon> 检测登录态
+  </button>
+  <button class="btn btn--sm btn--primary" @click="nav.go('/tasks/new?account_id=' + id)">
+    <icon name="plus" :size="14"></icon> 为该账号建任务
+  </button>
+</page-head>
+
+<alert type="error" :message="error" v-if="error">
+  <span>{{ error }}</span>
+  <button class="link-btn" style="margin-left:8px" @click="load">重试</button>
+</alert>
+
+<div v-if="loading" class="card"><div class="card__body"><div class="skeleton skeleton--block"></div></div></div>
+
+<template v-else-if="account">
+  <div class="grid grid--sidebar">
+    <div>
+      <div class="card">
+        <div class="card__head">
+          <div class="card__title">账号信息</div>
+          <div class="card__actions">
+            <status-tag kind="account" :value="account.status"></status-tag>
+          </div>
+        </div>
+        <div class="card__body">
+          <div class="desc desc--wide">
+            <div class="desc__k">昵称</div><div class="desc__v">{{ account.nickname || '—' }}</div>
+            <div class="desc__k">抖音号 / uid</div>
+            <div class="desc__v is-mono">{{ account.douyin_uid || '—' }}</div>
+            <div class="desc__k">sec_uid</div>
+            <div class="desc__v is-mono" style="word-break:break-all">
+              {{ account.sec_uid || '—' }}
+              <copy-button v-if="account.sec_uid" :text="account.sec_uid" label="复制"></copy-button>
+            </div>
+            <div class="desc__k">手机号</div><div class="desc__v">{{ account.phone_masked || '—' }}</div>
+            <div class="desc__k">登录方式</div>
+            <div class="desc__v">{{ account.login_type === 'sms' ? '短信验证码' : '扫码登录' }}</div>
+            <div class="desc__k">备注</div><div class="desc__v">{{ account.remark || '—' }}</div>
+            <div class="desc__k">最近检测</div>
+            <div class="desc__v">
+              <span v-if="account.last_check_at"><time-text :value="account.last_check_at" mode="time"></time-text></span>
+              <span v-else class="text-muted">未检测</span>
+            </div>
+            <div class="desc__k">登录态更新时间</div>
+            <div class="desc__v">
+              <span v-if="account.storage_updated_at">
+                <time-text :value="account.storage_updated_at" mode="time"></time-text>
+                <span class="text-muted">（{{ agoText(account.storage_updated_at) }}）</span>
+              </span>
+              <span v-else class="text-muted">—</span>
+            </div>
+            <div class="desc__k">添加时间</div>
+            <div class="desc__v"><time-text :value="account.created_at" mode="time"></time-text></div>
+          </div>
+          <div class="alert alert--error mt-12 mb-0" v-if="account.last_error">
+            <icon name="alert" :size="15" style="margin-top:2px"></icon>
+            <div class="alert__body">最近错误：{{ account.last_error }}</div>
+          </div>
+          <div class="btn-row mt-16">
+            <a class="btn btn--sm" href="#/accounts"><icon name="qr" :size="13"></icon> 到列表重新扫码登录</a>
+            <button class="btn btn--sm btn--danger" @click="remove">
+              <icon name="trash" :size="13"></icon> 删除账号
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head">
+          <div class="card__title">该账号的定时任务</div>
+          <div class="card__actions">
+            <a class="btn btn--sm" href="#/tasks"><icon name="clock" :size="13"></icon> 任务管理</a>
+          </div>
+        </div>
+        <data-table :loading="tasksLoading" :error="''" :empty="!tasks.length" :colspan="5"
+                    empty-title="该账号还没有定时任务"
+                    empty-hint="创建任务后，系统会按设定的时间自动给好友发送消息。">
+          <template #head>
+            <thead><tr><th>任务</th><th>执行时间</th><th>重复</th><th>状态</th><th>下次执行</th></tr></thead>
+          </template>
+          <template #empty-action>
+            <button class="btn btn--primary btn--sm" @click="nav.go('/tasks/new')">
+              <icon name="plus" :size="13"></icon> 新建任务
+            </button>
+          </template>
+          <tr v-for="row in tasks" :key="row.id">
+            <td><a class="row-title" :href="'#/tasks/' + row.id">{{ row.name || ('任务 #' + row.id) }}</a></td>
+            <td class="is-mono">{{ row.time_of_day || '—' }}</td>
+            <td><status-tag kind="repeat" :value="row.repeat_mode"></status-tag></td>
+            <td>
+              <span class="tag" :class="row.enabled ? 'tag--success' : 'tag--muted'">
+                {{ row.enabled ? '已启用' : '已停用' }}</span>
+            </td>
+            <td>
+              <span v-if="row.next_run_at"><time-text :value="row.next_run_at" mode="minute"></time-text></span>
+              <span v-else class="text-muted">—</span>
+            </td>
+          </tr>
+        </data-table>
+      </div>
+
+      <div class="card">
+        <div class="card__head">
+          <div class="card__title">最近执行记录</div>
+          <div class="card__actions"><a class="link-btn" href="#/records">查看全部</a></div>
+        </div>
+        <data-table :loading="runsLoading" :error="runsError" :empty="!runs.length" :colspan="5"
+                    empty-title="暂无执行记录" @retry="loadRelated">
+          <template #head>
+            <thead><tr><th>执行时间</th><th>状态</th><th class="is-num">成功</th><th class="is-num">失败</th><th>说明</th></tr></thead>
+          </template>
+          <tr v-for="row in runs" :key="row.id">
+            <td><time-text :value="row.started_at" mode="time"></time-text></td>
+            <td><status-tag kind="run" :value="row.status"></status-tag></td>
+            <td class="is-num text-success">{{ row.success_count || 0 }}</td>
+            <td class="is-num" :class="row.fail_count ? 'text-danger' : 'text-muted'">{{ row.fail_count || 0 }}</td>
+            <td><span class="ellipsis" :title="row.message">{{ row.message || '—' }}</span></td>
+          </tr>
+        </data-table>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card__head">
+          <div class="card__title">好友（前 10 个）</div>
+          <div class="card__actions">
+            <span class="tag tag--muted">共 {{ friendTotal }}</span>
+            <a class="link-btn" href="#/friends">管理</a>
+          </div>
+        </div>
+        <div class="card__body">
+          <div v-if="friendsLoading"><loading></loading></div>
+          <empty-state v-else-if="!friends.length" icon="users" title="还没有好友"
+                       hint="可以手动添加，或从抖音最近会话同步。"></empty-state>
+          <div v-else class="kv-list">
+            <div class="kv-list__row" v-for="f in friends" :key="f.id">
+              <div class="kv-list__v">
+                <div class="row-title">{{ f.nickname }}</div>
+                <div class="row-sub">
+                  火花 {{ f.spark_days || 0 }} 天
+                  <span v-if="f.last_sent_at"> · 最近 <time-text :value="f.last_sent_at" mode="ago"></time-text></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card__head"><div class="card__title">健康检查建议</div></div>
+        <div class="card__body fs-13 text-2">
+          <p>· 登录态失效时任务会失败，建议每天看一眼「执行记录」。</p>
+          <p>· 抖音异地/多设备登录会互相顶下线，避免同一账号在别处登录。</p>
+          <p>· 发送间隔与随机抖动保持默认值更安全，过于规律容易触发风控。</p>
+          <p class="mb-0">· 长时间失败会自动停用任务，可在任务页重新启用。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
